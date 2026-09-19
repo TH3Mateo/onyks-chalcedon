@@ -22,8 +22,9 @@ const BASE_FIELDS = [
 ]
 
 // Supplier code columns are all managed: one that is not current any more belongs to a
-// deleted or renamed supplier, and its map is dropped.
-const SUPPLIER_COLUMN = /^supplier_\d+_/
+// deleted or renamed supplier, and its map is dropped. The backend guarantees every
+// supplier column keeps this prefix regardless of naming scheme (see supplierColumnName).
+const SUPPLIER_COLUMN_PREFIX = 'supplier_'
 
 // Used only when the file does not exist yet.
 const DEFAULT_HEADER = [
@@ -48,16 +49,28 @@ const DEFAULT_HEADER = [
             'LibrarySearchPath=',
             'OrcadMultiValueDelimiter=,',
             'SearchSubDirectories=0',
-            'SchemaName=ALTIUM',
+            // Categories now live in the `public` schema of their own dedicated database
+            // (altium_lib) rather than an `ALTIUM` schema inside a shared one - see
+            // bloodstone's utils.py: syncLibraryDatabases / generateAltiumDbLib.
+            'SchemaName=public',
             'LastFocusedTable=',
         ],
     },
 ]
 
-// Same convention as getSupplierColumnMap() in the Bloodstone backend (utils.py).
-export function supplierColumnName(supplier)
+// The backend now computes this itself (utils.py: supplierColumnNames - a name slug,
+// e.g. "supplier_lcsc", with the id appended only to resolve a collision) and returns it
+// as `columnName` on every /supplier/list and /supplier/{id} item. This is only a
+// fallback for a backend predating that field, using ITS old convention
+// ("supplier_<id>_<name>") so a stale/un-upgraded server still gets a matching column.
+function legacySupplierColumnName(supplier)
 {
     return `supplier_${supplier.id}_${supplier.name.toLowerCase().replace(/ /g, '_').replace(/-/g, '_')}`
+}
+
+export function supplierColumnName(supplier)
+{
+    return supplier.columnName ?? legacySupplierColumnName(supplier)
 }
 
 export function normalize(text)
@@ -151,10 +164,13 @@ export function buildDbLib(existing, tables, suppliers)
 
     const managedFields = [
         ...BASE_FIELDS,
-        ...suppliers.map((s) => ({ field: supplierColumnName(s), type: 1, parameter: s.name })),
+        // Bracketed like every other non-built-in Altium parameter below ([Description],
+        // [Library Ref], ...) - matches the convention the backend's own DbLib generator
+        // (utils.py: generateAltiumDbLib) now uses for supplier columns.
+        ...suppliers.map((s) => ({ field: supplierColumnName(s), type: 1, parameter: `[${s.name}]` })),
     ]
     const managedNames = new Set(managedFields.map((f) => f.field))
-    const isManaged = (field) => managedNames.has(field) || SUPPLIER_COLUMN.test(field)
+    const isManaged = (field) => managedNames.has(field) || field.startsWith(SUPPLIER_COLUMN_PREFIX)
 
     const keptFieldMaps = sections
         .filter(isFieldMap)
