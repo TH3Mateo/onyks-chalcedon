@@ -4,6 +4,7 @@
     import { ref } from 'vue';
     import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
     import { useDbLibSync } from '../../composables/useDbLibSync.js';
+    import { useRepositorySync } from '../../composables/useRepositorySync.js';
 
     const userStore = useUserStore()
     const visibleSettings = ref(JSON.parse(JSON.stringify(userStore.$state)))
@@ -31,6 +32,7 @@
     }
 
     const { status: dblibStatus, syncDbLib } = useDbLibSync()
+    const { status: repositoryStatus } = useRepositorySync()
 
     const chooseDbLibPath = async () =>
     {
@@ -96,11 +98,11 @@
         </onyks-container>
 
         <onyks-container type="grid" cols="2" gap="l" padding="">
-            <onyks-text size="m">Autoupdate Interval (in minutes)</onyks-text>
+            <onyks-text size="m">Autoupdate Interval (in seconds)</onyks-text>
             <onyks-textfield placeholder="e.g 5" size="m" type="number" v-model="visibleSettings.database.autoupdateInterval" :disabled="!visibleSettings.database.autoupdate"></onyks-textfield>
         </onyks-container>
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
-            <onyks-text size="s">Min. value of the interval is 1 minute.</onyks-text>
+            <onyks-text size="s">Min. value of the interval is 5 seconds.</onyks-text>
         </onyks-container>
 
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
@@ -114,11 +116,17 @@
 
         <onyks-header level="4">Repository</onyks-header>
 
+        <onyks-text size="s">
+            Two independent, optional ways to keep the SVN working copy in sync without using the
+            Push/Pull buttons by hand. Autoupdate (Pull) periodically downloads changes from the
+            server. Auto-push watches the folder and all its subfolders and commits automatically
+            the moment any file in it changes. Both can be on at once; only one SVN operation ever
+            runs at a time.
+        </onyks-text>
+
         <onyks-container type="grid" cols="2" gap="l" padding="">
             <onyks-text size="m">Address</onyks-text>
             <onyks-textfield size="m" v-model="visibleSettings.repository.address" placeholder="e.g https://google.com"></onyks-textfield>
-            <onyks-text size="m">Autoupdate</onyks-text>
-            <onyks-checkbox size="l" :checked="visibleSettings.repository.autoupdate" @click="() => {visibleSettings.repository.autoupdate = !visibleSettings.repository.autoupdate}"></onyks-checkbox>
             <onyks-text size="m">Folder Path</onyks-text>
             <onyks-textfield size="m" v-model="visibleSettings.repository.path" placeholder="e.g C:/User/repository" disabled></onyks-textfield>
         </onyks-container>
@@ -128,14 +136,34 @@
         </onyks-container>
 
         <onyks-container type="grid" cols="2" gap="l" padding="">
-            <onyks-text size="m">Autoupdate Interval (in minutes)</onyks-text>
+            <onyks-text size="m">Autoupdate (Pull)</onyks-text>
+            <onyks-checkbox size="l" :checked="visibleSettings.repository.autoupdate" @click="() => {visibleSettings.repository.autoupdate = !visibleSettings.repository.autoupdate}"></onyks-checkbox>
+        </onyks-container>
+
+        <onyks-container type="grid" cols="2" gap="l" padding="">
+            <onyks-text size="m">Autoupdate Interval (in seconds)</onyks-text>
             <onyks-textfield size="m" placeholder="e.g 5" type="number" v-model="visibleSettings.repository.autoupdateInterval" :disabled="!visibleSettings.repository.autoupdate"></onyks-textfield>
         </onyks-container>
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
-            <onyks-text size="s">Min. value of the interval is 1 minute.</onyks-text>
+            <onyks-text size="s">Min. value of the interval is 5 seconds.</onyks-text>
         </onyks-container>
-        
-        
+
+        <onyks-container type="grid" cols="2" gap="l" padding="">
+            <onyks-text size="m">Auto-push on file change</onyks-text>
+            <onyks-checkbox size="l" :checked="visibleSettings.repository.autoupdatePush" @click="() => {visibleSettings.repository.autoupdatePush = !visibleSettings.repository.autoupdatePush}"></onyks-checkbox>
+        </onyks-container>
+        <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-text size="s">Commits automatically a few seconds after any change under the folder path above.</onyks-text>
+        </onyks-container>
+
+        <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-text size="s">
+                Last pull: {{ formatTime(repositoryStatus.lastPullCheck) }} · Last push: {{ formatTime(repositoryStatus.lastPush) }}
+            </onyks-text>
+        </onyks-container>
+
+        <onyks-alert v-if="repositoryStatus.error" type="error">{{ repositoryStatus.error }}</onyks-alert>
+
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
             <onyks-button background="green" @click="save">Save</onyks-button>
             <onyks-button background="red" @click="reset">Reset</onyks-button>

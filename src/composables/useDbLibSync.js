@@ -9,7 +9,7 @@ import { buildDbLib, normalize } from '../utils/dblib.js'
 // code column mapped in every table. What the user configured in Altium stays - see
 // utils/dblib.js for what is kept and what is generated.
 
-const MIN_INTERVAL_MINUTES = 1
+const MIN_INTERVAL_SECONDS = 5
 const PAGE_SIZE = 100
 
 const api = createClient('/api', { timeout: 5000 })
@@ -120,9 +120,9 @@ export function startDbLibAutoupdate()
             return
         }
 
-        const minutes = Math.max(MIN_INTERVAL_MINUTES, Number(userStore.database.autoupdateInterval) || MIN_INTERVAL_MINUTES)
+        const seconds = Math.max(MIN_INTERVAL_SECONDS, Number(userStore.database.autoupdateInterval) || MIN_INTERVAL_SECONDS)
         syncDbLib()
-        timer = setInterval(syncDbLib, minutes * 60 * 1000)
+        timer = setInterval(syncDbLib, seconds * 1000)
     }, { immediate: true })
 }
 

@@ -5,7 +5,11 @@ use std::os::windows::process::CommandExt;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use tauri::Manager;
+use std::sync::Mutex;
+use std::time::Duration;
+use notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{new_debouncer, DebouncedEventKind, Debouncer};
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -262,6 +266,61 @@ fn svn_delete(svn_folder_path: &str) -> Result<String, String> {
     Ok(deleted_files.join("\n"))
 }
 
+// Watches a folder (e.g. the SVN repository path) and all its subfolders for changes,
+// so the frontend can auto-push on local edits instead of only polling on a timer.
+// `.svn` internals and `.tmp` files (our own atomic-write leftovers) are filtered out
+// so SVN's own metadata churn during update/commit doesn't retrigger the watch. The
+// frontend also stops the watcher around its own push/pull calls (see
+// useRepositorySync.js) to avoid feedback loops.
+struct WatcherState(Mutex<Option<Debouncer<RecommendedWatcher>>>);
+
+// SVN rewrites its own metadata (`.svn/**`) on every update/commit, and our atomic
+// writer leaves `.tmp` files briefly (see write_file_atomically) - neither should
+// count as a user edit worth auto-pushing.
+fn is_relevant_change(path: &str) -> bool {
+    !path.contains(".svn") && !path.ends_with(".tmp")
+}
+
+#[tauri::command(async)]
+fn start_watch(
+    app: tauri::AppHandle,
+    state: tauri::State<WatcherState>,
+    path: String,
+) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    *guard = None;
+
+    let mut debouncer = new_debouncer(Duration::from_secs(3), move |result: notify_debouncer_mini::DebounceEventResult| {
+        let events = match result {
+            Ok(events) => events,
+            Err(_) => return,
+        };
+        let relevant = events.iter().any(|event| {
+            event.kind != DebouncedEventKind::AnyContinuous
+                && is_relevant_change(&event.path.to_string_lossy())
+        });
+        if relevant {
+            let _ = app.emit("repository-changed", ());
+        }
+    })
+    .map_err(|e| e.to_string())?;
+
+    debouncer
+        .watcher()
+        .watch(Path::new(&path), RecursiveMode::Recursive)
+        .map_err(|e| e.to_string())?;
+
+    *guard = Some(debouncer);
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn stop_watch(state: tauri::State<WatcherState>) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    *guard = None;
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn DbLib_ConnectionString(user: &str, source: &str) -> String {
     format!(
@@ -349,6 +408,7 @@ fn write_binary_file(path: &str, data: Vec<u8>) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .manage(WatcherState(Mutex::new(None)))
         .setup(|app| {
             let salt_path = app
                 .path()
@@ -374,10 +434,71 @@ pub fn run() {
             svn_delete,
             svn_revert,
             svn_cleanup,
+            start_watch,
+            stop_watch,
             read_text_file,
             write_text_file,
             write_binary_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn is_relevant_change_filters_svn_and_tmp() {
+        assert!(is_relevant_change("C:/repo/fpga/fpga.PcbLib"));
+        assert!(!is_relevant_change("C:/repo/.svn/wc.db"));
+        assert!(!is_relevant_change("C:/repo/onyks_bloodstone.DbLib.tmp"));
+    }
+
+    // Exercises the real notify + notify-debouncer-mini watch, bypassing Tauri's
+    // AppHandle (not needed outside a running app), to prove a change in a *subfolder*
+    // of the watched path is actually detected end to end - not just that it compiles.
+    #[test]
+    fn watcher_detects_change_in_subfolder() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("chalcedon-watch-test-{nanos}"));
+        let sub = dir.join("nested");
+        fs::create_dir_all(&sub).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let mut debouncer = new_debouncer(
+            Duration::from_millis(200),
+            move |result: notify_debouncer_mini::DebounceEventResult| {
+                if let Ok(events) = result {
+                    let relevant = events
+                        .iter()
+                        .any(|e| is_relevant_change(&e.path.to_string_lossy()));
+                    if relevant {
+                        let _ = tx.send(());
+                    }
+                }
+            },
+        )
+        .unwrap();
+        debouncer
+            .watcher()
+            .watch(&dir, RecursiveMode::Recursive)
+            .unwrap();
+
+        // Give the OS watch a moment to fully register before writing.
+        std::thread::sleep(Duration::from_millis(200));
+        fs::write(sub.join("changed.txt"), b"hello").unwrap();
+
+        let received = rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(
+            received,
+            "expected a change event for a file created in a watched subfolder"
+        );
+    }
 }

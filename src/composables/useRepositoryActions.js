@@ -5,9 +5,10 @@ import { useUserStore } from '../stores/user.js'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
-// Shared between the Repository page and the Push/Pull buttons of the strip menu, so
-// only one SVN operation runs at a time no matter where it was started from.
-const busy = ref(false)
+// Shared between the Repository page, the Push/Pull buttons of the strip menu, and the
+// background autoupdate sync (useRepositorySync.js), so only one SVN operation runs at
+// a time no matter where it was started from.
+export const busy = ref(false)
 
 // `dialogs` is a ref of {error, progress} holding the ErrorDialog and ProgressDialog
 // instances that report the progress of the operation.

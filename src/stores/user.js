@@ -40,11 +40,16 @@ export const useUserStore = defineStore('user', () =>
     const password = ref('')
     const webManagerAddress = ref('')
 
+    // autoupdate/autoupdateInterval: periodic Pull (svn update), same pattern as the
+    // DbLib sync. autoupdatePush: alternative trigger - watches `path` and all its
+    // subfolders and automatically Pushes (commit) whenever a file changes there,
+    // instead of waiting for the interval or a manual click.
     const defaultRepository = () => (
     {
         address: '',
         autoupdate: false,
-        autoupdateInterval: 0,
+        autoupdateInterval: 5,
+        autoupdatePush: false,
         lastLocalCheckUpdate: 0,
         path: ''
     })

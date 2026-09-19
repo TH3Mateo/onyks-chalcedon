@@ -2,10 +2,12 @@
     import { onMounted } from 'vue';
     import { useUserStore } from './stores/user';
     import { startDbLibAutoupdate } from './composables/useDbLibSync.js';
+    import { startRepositorySync } from './composables/useRepositorySync.js';
 
     const store = useUserStore()
     store.init()
     startDbLibAutoupdate()
+    startRepositorySync()
 
     onMounted(() =>
     {
