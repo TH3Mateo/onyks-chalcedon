@@ -16,9 +16,12 @@
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-store": "~2.4.4",
     "@tauri-apps/plugin-stronghold": "~2.3.1",
+    "@vueuse/core": "^14.3.0",
     "luxon": "^3.7.2",
-    "onyks-web-ui": "github:knonyks/onyks-web-ui",
+    "onyks-web-ui": "github:knonyks/onyks-web-ui-system",
+    "pdf-lib": "^1.17.1",
     "pinia": "^4.0.3",
+    "qrcode": "^1.5.4",
     "uuidjs": "^5.1.0",
     "vue": "^3.5.13",
     "vue-router": "^5.0.6"

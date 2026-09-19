@@ -2,6 +2,7 @@
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 use tauri::Manager;
@@ -304,6 +305,47 @@ fn DbLib_FieldMap(index: u32, tableName: &str, fieldName: &str,
     )
 }
 
+#[tauri::command(async)]
+fn read_text_file(path: &str) -> Result<Option<String>, String> {
+    // Lossy, because a file saved by another program is not necessarily UTF-8.
+    match fs::read(path) {
+        Ok(content) => Ok(Some(String::from_utf8_lossy(&content).into_owned())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("Błąd odczytu pliku: {}", e)),
+    }
+}
+
+// Written to a temporary file first and then renamed, so a program reading the file
+// at the same moment (e.g. Altium with the DbLib) never sees it half-written.
+fn write_file_atomically(path: &str, data: &[u8]) -> Result<(), String> {
+    let target = Path::new(path);
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| format!("Błąd tworzenia folderu: {}", e))?;
+        }
+    }
+    let mut temporary = target.as_os_str().to_owned();
+    temporary.push(".tmp");
+    fs::write(&temporary, data).map_err(|e| format!("Błąd zapisu pliku: {}", e))?;
+    if fs::rename(&temporary, target).is_err() {
+        // Windows refuses to replace a file another program holds open; writing into
+        // it directly may still be allowed.
+        let _ = fs::remove_file(&temporary);
+        fs::write(target, data).map_err(|e| format!("Błąd zapisu pliku: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn write_text_file(path: &str, content: &str) -> Result<(), String> {
+    write_file_atomically(path, content.as_bytes())
+}
+
+#[tauri::command(async)]
+fn write_binary_file(path: &str, data: Vec<u8>) -> Result<(), String> {
+    write_file_atomically(path, &data)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -332,7 +374,10 @@ pub fn run() {
             svn_update,
             svn_delete,
             svn_revert,
-            svn_cleanup
+            svn_cleanup,
+            read_text_file,
+            write_text_file,
+            write_binary_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

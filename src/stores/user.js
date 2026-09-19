@@ -12,8 +12,10 @@ export const useUserStore = defineStore('user', () =>
         login.value = await store.get('login') ?? ''
         password.value = await store.get('password') ?? ''
         webManagerAddress.value = await store.get('webManagerAddress') ?? ''
-        repository.value = await store.get('repository') ?? repository.value
-        database.value = await store.get('database') ?? database.value
+        // Merged over the defaults, so settings saved by an older version still get
+        // the keys added since then.
+        repository.value = { ...defaultRepository(), ...(await store.get('repository') ?? {}) }
+        database.value = { ...defaultDatabase(), ...(await store.get('database') ?? {}) }
     }
 
     const saveSettings = async () =>
@@ -38,7 +40,7 @@ export const useUserStore = defineStore('user', () =>
     const password = ref('')
     const webManagerAddress = ref('')
 
-    const repository = ref(
+    const defaultRepository = () => (
     {
         address: '',
         autoupdate: false,
@@ -47,12 +49,18 @@ export const useUserStore = defineStore('user', () =>
         path: ''
     })
 
-    const database = ref({
-        address: '',
+    // The server address comes from webManagerAddress; dblibPath is the local Altium
+    // .DbLib file kept up to date with the database.
+    const defaultDatabase = () => (
+    {
         autoupdate: false,
-        autoupdateInterval: 0,
-        lastLocalCheckUpdate: 0
+        autoupdateInterval: 5,
+        lastLocalCheckUpdate: 0,
+        dblibPath: ''
     })
+
+    const repository = ref(defaultRepository())
+    const database = ref(defaultDatabase())
     
     return {
         login,

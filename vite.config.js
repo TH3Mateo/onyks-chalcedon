@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { fileURLToPath, URL } from "node:url";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -14,6 +15,12 @@ export default defineConfig(async () => ({
       }
     })],
     base: '',
+    resolve: {
+      alias: {
+        // Code ported from the Bloodstone web GUI (src/web) imports through this alias.
+        "@web": fileURLToPath(new URL("./src/web", import.meta.url)),
+      },
+    },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
