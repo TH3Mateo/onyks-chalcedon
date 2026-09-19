@@ -1,15 +1,18 @@
 import { ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { fetch } from '@tauri-apps/plugin-http'
 import { useUserStore } from '../stores/user.js'
-import { serverAddress, serverUrl } from '../web/utils/http.js'
+import { serverAddress, createClient } from '../web/utils/http.js'
+import { buildDbLib, normalize } from '../utils/dblib.js'
 
-// Keeps the local Altium .DbLib file in step with the database. The server generates
-// the file from the current state of the database (every category table becomes a
-// [TableN] section with its field maps), so a newly added table - e.g. batteries -
-// shows up here on the next check without anyone downloading the file by hand.
+// Keeps the local Altium .DbLib file in step with the database: a new category table
+// (e.g. batteries) gets its [TableN] section and field maps, a new supplier gets its
+// code column mapped in every table. What the user configured in Altium stays - see
+// utils/dblib.js for what is kept and what is generated.
 
 const MIN_INTERVAL_MINUTES = 1
+const PAGE_SIZE = 100
+
+const api = createClient('/api', { timeout: 5000 })
 
 const status = ref({
     running: false,
@@ -18,30 +21,19 @@ const status = ref({
     error: '',
 })
 
-const normalize = (text) => text.replace(/\r\n/g, '\n')
-
-const connectionStringLine = (text) =>
-    normalize(text).split('\n').find((line) => line.startsWith('ConnectionString=')) ?? null
-
-// The generated file leaves User ID and Password blank. The login is filled in from the
-// settings; the password is never written by the program. Once the file exists, its
-// connection string is kept as it is, so a password the user typed into it (or any
-// other change to the connection) survives every later update.
-function personalize(generated, existing, login)
+// The list endpoints are paginated (at most 100 items per request).
+async function fetchAll(url)
 {
-    const existingConnection = existing === null ? null : connectionStringLine(existing)
-    return normalize(generated).split('\n').map((line) =>
+    const items = []
+    for (let skip = 0; ; skip += PAGE_SIZE)
     {
-        if (!line.startsWith('ConnectionString='))
+        const response = await api.get(url, { params: { limit: PAGE_SIZE, skip } })
+        items.push(...response.data.items)
+        if (response.data.items.length < PAGE_SIZE || items.length >= response.data.total)
         {
-            return line
+            return items
         }
-        if (existingConnection !== null)
-        {
-            return existingConnection
-        }
-        return line.replace('User ID=;', `User ID=${login};`)
-    }).join('\n')
+    }
 }
 
 export async function syncDbLib()
@@ -67,15 +59,15 @@ export async function syncDbLib()
     status.value.running = true
     try
     {
-        const response = await fetch(serverUrl('/api/settings/dblib'), { method: 'GET', connectTimeout: 5000 })
-        if (!response.ok)
-        {
-            throw new Error(`The server answered with status code ${response.status}.`)
-        }
+        // Ordered by id, so new categories are appended after the existing ones.
+        const tables = (await fetchAll('/table/list')).map((table) => table.name)
+        // Not ordered by the server; sorted so the file does not change just because
+        // the database returned the rows in a different order.
+        const suppliers = (await fetchAll('/supplier/list')).sort((a, b) => a.id - b.id)
 
         const existing = await invoke('read_text_file', { path })
-        const content = personalize(await response.text(), existing, userStore.login)
-        const changed = existing === null || normalize(existing) !== content
+        const content = buildDbLib(existing, tables, suppliers)
+        const changed = existing === null || normalize(existing) !== normalize(content)
 
         if (changed)
         {
@@ -89,7 +81,7 @@ export async function syncDbLib()
     }
     catch (e)
     {
-        status.value.error = String(e?.message ?? e)
+        status.value.error = String(e?.response?.data?.detail ?? e?.message ?? e)
         return false
     }
     finally

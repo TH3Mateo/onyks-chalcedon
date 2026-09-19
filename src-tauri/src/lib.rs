@@ -280,8 +280,7 @@ fn DbLib_table(id: u32, name: &str, enabled: bool) -> String {
         TableName={name}\n\
         Enabled={enabled_str}\n\
         UserWhere=0\n\
-        UserWhereText=",
-        id, name, enabled_str
+        UserWhereText="
     )
 }
 
