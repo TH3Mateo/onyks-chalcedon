@@ -1,0 +1,38 @@
+# Maintainer: Karol Ambroziński
+#
+# Build:   cd packaging/arch && makepkg -si
+# Local tree instead of GitHub: CHALCEDON_REPO=file:///path/to/git/repo makepkg -si
+#
+# The SVN client that the Windows installer bundles as an MSI is a regular dependency here.
+# psqlodbc exists only in the AUR, so it is optional (install it with an AUR helper).
+pkgname=onyks-chalcedon
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='PC app for managing the ONYKS PCB element library (companion of ONYKS Bloodstone)'
+arch=('x86_64')
+url='https://github.com/TH3Mateo/onyks-chalcedon'
+license=('custom')
+depends=('webkit2gtk-4.1' 'gtk3' 'subversion' 'unixodbc' 'libsodium')
+optdepends=('psqlodbc: PostgreSQL ODBC driver for database libraries (AUR only)'
+            'tailscale: connect to the server over a VPN')
+makedepends=('rust' 'nodejs' 'pnpm' 'git' 'pkgconf' 'openssl' 'libayatana-appindicator' 'librsvg' 'xdotool')
+source=("$pkgname::git+${CHALCEDON_REPO:-$url.git}"
+        'onyks-chalcedon.desktop')
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+  cd "$srcdir/$pkgname"
+  pnpm install --frozen-lockfile
+  # Use the system libsodium instead of letting libsodium-sys-stable (tauri-plugin-stronghold)
+  # build its own copy: that copy is not linked on Arch (undefined sodium_* symbols).
+  export SODIUM_USE_PKG_CONFIG=1
+  # --no-bundle: only the binary (with the frontend embedded); pacman is the packager.
+  pnpm tauri build --no-bundle
+}
+
+package() {
+  cd "$srcdir/$pkgname"
+  install -Dm755 src-tauri/target/release/onyks-chalcedon "$pkgdir/usr/bin/onyks-chalcedon"
+  install -Dm644 "$srcdir/onyks-chalcedon.desktop" "$pkgdir/usr/share/applications/onyks-chalcedon.desktop"
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/onyks-chalcedon.png"
+}

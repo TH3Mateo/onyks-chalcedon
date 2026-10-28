@@ -3,11 +3,13 @@
     import { useUserStore } from './stores/user';
     import { startDbLibAutoupdate } from './composables/useDbLibSync.js';
     import { startRepositorySync } from './composables/useRepositorySync.js';
+    import { startTailscaleAutostart } from './composables/useTailscale.js';
 
     const store = useUserStore()
     store.init()
     startDbLibAutoupdate()
     startRepositorySync()
+    startTailscaleAutostart()
 
     onMounted(() =>
     {

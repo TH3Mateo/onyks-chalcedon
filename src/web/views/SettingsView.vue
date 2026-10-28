@@ -58,26 +58,6 @@
                 </onyks-container>
             </onyks-card>
 
-            <onyks-card title="Download Library Files" size="l">
-                <onyks-container gap="m" padding="">
-                    <onyks-text size="s">
-                        Both files are generated fresh from the current database every time you download them —
-                        any new category table is reflected automatically. The username is filled in; add the
-                        password after opening the file. Altium and KiCad each read their own set of tables and
-                        cannot see the other's.
-                    </onyks-text>
-
-                    <onyks-button background="blue" @click="settings.downloadDbLib">Download Altium .DbLib</onyks-button>
-                    <onyks-button background="green" @click="settings.downloadKicadDbl">Download KiCad .kicad_dbl</onyks-button>
-
-                    <onyks-text size="s">
-                        For KiCad: register each SchLib/PcbLib file in your Symbol/Footprint Library Table with
-                        Type = Altium, using the file name (without extension) as the library nickname — this
-                        must match the "Symbols"/"Footprints" columns generated in the database views.
-                    </onyks-text>
-                </onyks-container>
-            </onyks-card>
-
         </onyks-container>
 
     </onyks-container>

@@ -16,6 +16,7 @@ export const useUserStore = defineStore('user', () =>
         // the keys added since then.
         repository.value = { ...defaultRepository(), ...(await store.get('repository') ?? {}) }
         database.value = { ...defaultDatabase(), ...(await store.get('database') ?? {}) }
+        tailscale.value = { ...defaultTailscale(), ...(await store.get('tailscale') ?? {}) }
     }
 
     const saveSettings = async () =>
@@ -25,6 +26,7 @@ export const useUserStore = defineStore('user', () =>
         await store.set('webManagerAddress', webManagerAddress.value)
         await store.set('repository', repository.value)
         await store.set('database', database.value)
+        await store.set('tailscale', tailscale.value)
         await store.save()
     }
 
@@ -64,14 +66,24 @@ export const useUserStore = defineStore('user', () =>
         dblibPath: ''
     })
 
+    // autostart: connect to Tailscale when the program starts, using the auth key
+    // stored in the text file at authKeyPath (the key itself is never kept in settings).
+    const defaultTailscale = () => (
+    {
+        autostart: false,
+        authKeyPath: ''
+    })
+
     const repository = ref(defaultRepository())
     const database = ref(defaultDatabase())
+    const tailscale = ref(defaultTailscale())
     
     return {
         login,
         password,
         repository,
         database,
+        tailscale,
         webManagerAddress,
         init,
         loadSettings,

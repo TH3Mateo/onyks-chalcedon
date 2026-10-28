@@ -16,6 +16,79 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// Files that must never be versioned: the DbLib is rewritten locally by this program
+// (and by Altium) from the database, so versioning it only produces conflicts; `.tmp`
+// are our own atomic-write leftovers. Passed to every svn call (not stored in the
+// repository), so `svn add` / `svn status` skip them like a permanent .gitignore.
+const SVN_IGNORED: &str = "*.DbLib *.dblib *.tmp Thumbs.db desktop.ini";
+
+fn svn_command() -> Command {
+    let mut command = Command::new("svn");
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    command.arg(format!(
+        "--config-option=config:miscellany:global-ignores={}",
+        SVN_IGNORED
+    ));
+    command
+}
+
+fn svn_stdout(mut command: Command) -> Result<String, String> {
+    let output = command
+        .output()
+        .map_err(|e| format!("Błąd wykonania komendy: {}", e))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+fn same_url(a: &str, b: &str) -> bool {
+    a.trim().trim_end_matches('/').eq_ignore_ascii_case(b.trim().trim_end_matches('/'))
+}
+
+// The working copy remembers the server URL in `.svn`. When the server's address changes
+// (another IP after switching between the LAN and a VPN, a new hostname...) every svn call
+// fails and the copy looks broken. If the configured address differs from the stored one,
+// `svn relocate` repoints the copy (it verifies the repository UUID, so it cannot attach
+// the copy to a different repository).
+fn svn_ensure_url(svn_folder_path: &str, url: &str, login: &str, password: &str) -> Result<(), String> {
+    if url.trim().is_empty() {
+        return Ok(());
+    }
+    let mut info = svn_command();
+    info.current_dir(svn_folder_path)
+        .args(["info", "--show-item", "url", "--no-newline"]);
+    let current = svn_stdout(info)?;
+    if same_url(&current, url) {
+        return Ok(());
+    }
+
+    let mut relocate = svn_command();
+    relocate
+        .current_dir(svn_folder_path)
+        .args([
+            "relocate",
+            url.trim(),
+            "--username",
+            login,
+            "--password",
+            password,
+            "--trust-server-cert",
+            "--non-interactive",
+            "--no-auth-cache",
+        ]);
+    svn_stdout(relocate).map(|_| ()).map_err(|e| {
+        format!(
+            "Adres repozytorium zmienił się z {} na {}, ale nie udało się przepiąć kopii roboczej: {}",
+            current,
+            url.trim(),
+            e
+        )
+    })
+}
+
 #[tauri::command(async)]
 fn is_svn_repository(svn_folder_path: &str) -> bool {
     let path = Path::new(svn_folder_path).join(".svn");
@@ -24,9 +97,7 @@ fn is_svn_repository(svn_folder_path: &str) -> bool {
 
 #[tauri::command(async)]
 fn svn_status(svn_folder_path: &str) -> Result<Vec<String>, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    let mut command = svn_command();
     let output = command
         .current_dir(svn_folder_path)
         .arg("status")
@@ -58,9 +129,7 @@ fn svn_checkout(
     password: &str,
     url: &str,
 ) -> Result<Vec<String>, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    let mut command = svn_command();
     let output = command
         .current_dir(svn_folder_path)
         .args([
@@ -97,9 +166,7 @@ fn svn_checkout(
 
 #[tauri::command(async)]
 fn svn_add_all(svn_folder_path: &str) -> Result<Vec<String>, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    let mut command = svn_command();
     let output = command
         .current_dir(svn_folder_path)
         .args(["add", "--force", "."])
@@ -129,10 +196,10 @@ fn svn_commit(
     login: &str,
     password: &str,
     commit_name: &str,
+    url: Option<&str>,
 ) -> Result<String, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    svn_ensure_url(svn_folder_path, url.unwrap_or(""), login, password)?;
+    let mut command = svn_command();
     let output = command
         .current_dir(svn_folder_path)
         .args([
@@ -157,10 +224,14 @@ fn svn_commit(
 }
 
 #[tauri::command(async)]
-fn svn_update(svn_folder_path: &str, login: &str, password: &str) -> Result<String, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+fn svn_update(
+    svn_folder_path: &str,
+    login: &str,
+    password: &str,
+    url: Option<&str>,
+) -> Result<String, String> {
+    svn_ensure_url(svn_folder_path, url.unwrap_or(""), login, password)?;
+    let mut command = svn_command();
     let output = command
         .current_dir(svn_folder_path)
         .args([
@@ -184,9 +255,7 @@ fn svn_update(svn_folder_path: &str, login: &str, password: &str) -> Result<Stri
 
 #[tauri::command(async)]
 fn svn_revert(svn_folder_path: &str) -> Result<String, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    let mut command = svn_command();
 
     let output = command
         .current_dir(svn_folder_path)
@@ -206,9 +275,7 @@ fn svn_revert(svn_folder_path: &str) -> Result<String, String> {
 
 #[tauri::command(async)]
 fn svn_cleanup(svn_folder_path: &str) -> Result<String, String> {
-    let mut command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    let mut command = svn_command();
 
     let output = command
         .current_dir(svn_folder_path)
@@ -228,9 +295,7 @@ fn svn_cleanup(svn_folder_path: &str) -> Result<String, String> {
 
 #[tauri::command(async)]
 fn svn_delete(svn_folder_path: &str) -> Result<String, String> {
-    let mut status_command = Command::new("svn");
-    #[cfg(target_os = "windows")]
-    status_command.creation_flags(0x08000000);
+    let mut status_command = svn_command();
 
     let status_output = status_command
         .current_dir(svn_folder_path)
@@ -245,9 +310,7 @@ fn svn_delete(svn_folder_path: &str) -> Result<String, String> {
     let mut deleted_files = Vec::new();
     for line in String::from_utf8_lossy(&status_output.stdout).lines() {
         if let Some(path) = line.strip_prefix('!').map(str::trim_start) {
-            let mut delete_command = Command::new("svn");
-            #[cfg(target_os = "windows")]
-            delete_command.creation_flags(0x08000000);
+            let mut delete_command = svn_command();
 
             let output = delete_command
                 .current_dir(svn_folder_path)
@@ -394,6 +457,34 @@ fn write_file_atomically(path: &str, data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// One entry of a folder listing for the Repository view: `type` is "dir" or "file".
+#[derive(serde::Serialize)]
+struct DirEntry {
+    name: String,
+    r#type: &'static str,
+}
+
+// Folders first, then files, both alphabetical; the `.svn` metadata folder is hidden.
+#[tauri::command(async)]
+fn list_directory(path: &str) -> Result<Vec<DirEntry>, String> {
+    let mut entries: Vec<DirEntry> = fs::read_dir(path)
+        .map_err(|e| format!("Błąd odczytu folderu: {}", e))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == ".svn" {
+                return None;
+            }
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            Some(DirEntry { name, r#type: if is_dir { "dir" } else { "file" } })
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        (a.r#type != "dir", a.name.to_lowercase()).cmp(&(b.r#type != "dir", b.name.to_lowercase()))
+    });
+    Ok(entries)
+}
+
 #[tauri::command(async)]
 fn write_text_file(path: &str, content: &str) -> Result<(), String> {
     write_file_atomically(path, content.as_bytes())
@@ -402,6 +493,236 @@ fn write_text_file(path: &str, content: &str) -> Result<(), String> {
 #[tauri::command(async)]
 fn write_binary_file(path: &str, data: Vec<u8>) -> Result<(), String> {
     write_file_atomically(path, &data)
+}
+
+// ---------------------------------------------------------------------------
+// Tailscale
+// ---------------------------------------------------------------------------
+
+// `tailscale` from PATH first, then the default install location.
+fn tailscale_candidates() -> Vec<String> {
+    let mut candidates = vec!["tailscale".to_string()];
+    for variable in ["ProgramFiles", "ProgramW6432"] {
+        if let Ok(dir) = std::env::var(variable) {
+            candidates.push(format!("{}\\Tailscale\\tailscale.exe", dir));
+        }
+    }
+    candidates
+}
+
+fn tailscale_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000);
+    command
+}
+
+fn find_tailscale_cli() -> Option<String> {
+    tailscale_candidates().into_iter().find(|program| {
+        tailscale_command(program)
+            .arg("version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    })
+}
+
+// Starts the Tailscale tray client (tailscale-ipn.exe) unless it already runs.
+// Best effort: the background service works without it.
+fn start_tailscale_client() {
+    let Ok(dir) = std::env::var("ProgramFiles") else {
+        return;
+    };
+    let client = format!("{}\\Tailscale\\tailscale-ipn.exe", dir);
+    if !Path::new(&client).is_file() {
+        return;
+    }
+
+    let mut tasklist = Command::new("tasklist");
+    #[cfg(target_os = "windows")]
+    tasklist.creation_flags(0x08000000);
+    let running = tasklist
+        .args(["/FI", "IMAGENAME eq tailscale-ipn.exe", "/NH"])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).contains("tailscale-ipn.exe"))
+        .unwrap_or(false);
+
+    if !running {
+        let _ = Command::new(client).spawn();
+    }
+}
+
+// The auth key must never end up in an error shown in the UI or in logs.
+fn redact(text: &str, secret: &str) -> String {
+    if secret.is_empty() {
+        text.to_string()
+    } else {
+        text.replace(secret, "***")
+    }
+}
+
+fn tailscale_backend_state(cli: &str) -> Option<String> {
+    let output = tailscale_command(cli).args(["status", "--json"]).output().ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    json.get("BackendState")?.as_str().map(|s| s.to_string())
+}
+
+// Starts the Tailscale client and logs in with the auth key stored in the given
+// text file (`tailscale login --auth-key=<key>`). Returns a short status message.
+#[tauri::command(async)]
+fn tailscale_connect(auth_key_path: &str) -> Result<String, String> {
+    if auth_key_path.trim().is_empty() {
+        return Err("Nie wybrano pliku z kluczem Tailscale.".to_string());
+    }
+    let content = fs::read(auth_key_path)
+        .map_err(|e| format!("Nie można odczytać pliku z kluczem Tailscale: {}", e))?;
+    let key = String::from_utf8_lossy(&content)
+        .trim_start_matches('\u{feff}')
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        return Err("Plik z kluczem Tailscale jest pusty.".to_string());
+    }
+    if key.lines().count() > 1 {
+        return Err("Plik z kluczem Tailscale powinien zawierać tylko jeden klucz.".to_string());
+    }
+
+    let cli = find_tailscale_cli().ok_or_else(|| {
+        "Nie znaleziono programu Tailscale. Zainstaluj go (jest dołączony do instalatora)."
+            .to_string()
+    })?;
+
+    // The client (tray app) is started only AFTER the login: launched while logged
+    // out it opens the browser sign-in page by itself. The background service that
+    // `tailscale login` talks to does not need the client.
+    // The service may still be starting (e.g. right after boot).
+    let mut state = None;
+    for _ in 0..10 {
+        state = tailscale_backend_state(&cli);
+        if state.is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
+    if state.as_deref() == Some("Running") {
+        start_tailscale_client();
+        return Ok("Tailscale jest już połączony.".to_string());
+    }
+
+    let output = tailscale_command(&cli)
+        .args(["login", "--timeout=60s"])
+        .arg(format!("--auth-key={}", key))
+        .output()
+        .map_err(|e| format!("Błąd uruchomienia tailscale: {}", e))?;
+
+    if output.status.success() {
+        start_tailscale_client();
+        Ok("Zalogowano do Tailscale.".to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let message = if stderr.trim().is_empty() { stdout } else { stderr };
+        Err(format!("tailscale login: {}", redact(message.trim(), &key)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Server discovery
+// ---------------------------------------------------------------------------
+
+// Tailscale (and similar VPNs) use 100.64.0.0/10; scanning such a range blindly is
+// pointless, its peers are listed from `tailscale status` instead.
+fn is_vpn_range(ip: &std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (64..128).contains(&o[1])
+}
+
+// Hosts of the /24 network of every local IPv4 address (LAN, Wi-Fi, VPN adapters),
+// without this computer's own addresses.
+fn local_subnet_hosts() -> Vec<std::net::Ipv4Addr> {
+    let mut own = Vec::new();
+    let mut networks = Vec::new();
+    for interface in if_addrs::get_if_addrs().unwrap_or_default() {
+        if let std::net::IpAddr::V4(ip) = interface.ip() {
+            if ip.is_loopback() || ip.is_link_local() || is_vpn_range(&ip) {
+                continue;
+            }
+            own.push(ip);
+            let o = ip.octets();
+            if !networks.contains(&[o[0], o[1], o[2]]) {
+                networks.push([o[0], o[1], o[2]]);
+            }
+        }
+    }
+    let mut hosts = Vec::new();
+    for n in networks {
+        for last in 1..=254u8 {
+            let ip = std::net::Ipv4Addr::new(n[0], n[1], n[2], last);
+            if !own.contains(&ip) {
+                hosts.push(ip);
+            }
+        }
+    }
+    hosts
+}
+
+// IPv4 addresses of the other devices of the Tailscale network.
+fn tailscale_peer_hosts() -> Vec<std::net::Ipv4Addr> {
+    let Some(cli) = find_tailscale_cli() else {
+        return Vec::new();
+    };
+    let Ok(output) = tailscale_command(&cli).args(["status", "--json"]).output() else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return Vec::new();
+    };
+    let mut hosts = Vec::new();
+    if let Some(peers) = json.get("Peer").and_then(|p| p.as_object()) {
+        for peer in peers.values() {
+            if let Some(ips) = peer.get("TailscaleIPs").and_then(|i| i.as_array()) {
+                for ip in ips.iter().filter_map(|i| i.as_str()) {
+                    if let Ok(ip) = ip.parse::<std::net::Ipv4Addr>() {
+                        hosts.push(ip);
+                    }
+                }
+            }
+        }
+    }
+    hosts
+}
+
+fn open_hosts(hosts: Vec<std::net::Ipv4Addr>, port: u16, timeout: Duration) -> Vec<String> {
+    let found = Mutex::new(Vec::new());
+    // Probed in batches, so a /24 network does not open hundreds of sockets at once.
+    for batch in hosts.chunks(128) {
+        std::thread::scope(|scope| {
+            for ip in batch {
+                let found = &found;
+                scope.spawn(move || {
+                    let address = std::net::SocketAddr::from((*ip, port));
+                    if std::net::TcpStream::connect_timeout(&address, timeout).is_ok() {
+                        found.lock().unwrap().push(ip.to_string());
+                    }
+                });
+            }
+        });
+    }
+    let mut found = found.into_inner().unwrap();
+    found.sort_by_key(|ip| ip.parse::<std::net::Ipv4Addr>().map(|a| a.octets()).unwrap_or_default());
+    found.dedup();
+    found
+}
+
+// Looks for computers listening on `port` (the web manager's) in the local networks of
+// this computer and among the Tailscale peers. The frontend then checks which of them
+// really is the ONYKS server. Returns the IP addresses found.
+#[tauri::command(async)]
+fn discover_servers(port: u16) -> Vec<String> {
+    let mut hosts = local_subnet_hosts();
+    hosts.extend(tailscale_peer_hosts());
+    open_hosts(hosts, port, Duration::from_millis(400))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -438,7 +759,10 @@ pub fn run() {
             stop_watch,
             read_text_file,
             write_text_file,
-            write_binary_file
+            write_binary_file,
+            list_directory,
+            tailscale_connect,
+            discover_servers
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -449,6 +773,41 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn same_url_ignores_trailing_slash_and_case() {
+        assert!(same_url("http://10.0.0.5/svn/repo/", "http://10.0.0.5/svn/repo"));
+        assert!(same_url("http://Server/svn", "http://server/svn"));
+        assert!(!same_url("http://10.0.0.5/svn", "http://100.64.0.2/svn"));
+    }
+
+    #[test]
+    fn vpn_range_is_100_64_to_100_127() {
+        assert!(is_vpn_range(&"100.64.0.1".parse().unwrap()));
+        assert!(is_vpn_range(&"100.127.255.1".parse().unwrap()));
+        assert!(!is_vpn_range(&"100.128.0.1".parse().unwrap()));
+        assert!(!is_vpn_range(&"192.168.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn open_hosts_finds_a_listening_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let found = open_hosts(vec!["127.0.0.1".parse().unwrap(), "127.0.0.2".parse().unwrap()], port, Duration::from_millis(300));
+        assert_eq!(found, vec!["127.0.0.1".to_string()]);
+    }
+
+    #[test]
+    fn redact_hides_the_auth_key() {
+        assert_eq!(redact("bad key tskey-abc123 given", "tskey-abc123"), "bad key *** given");
+        assert_eq!(redact("nothing", ""), "nothing");
+    }
+
+    #[test]
+    fn tailscale_connect_rejects_missing_or_empty_key_file() {
+        assert!(tailscale_connect("").is_err());
+        assert!(tailscale_connect("Z:/definitely/not/here.txt").is_err());
+    }
 
     #[test]
     fn is_relevant_change_filters_svn_and_tmp() {

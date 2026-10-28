@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ONYKS Chalcedon
+Comment=Manager of the ONYKS PCB element library
+Exec=onyks-chalcedon
+Icon=onyks-chalcedon
+Categories=Development;Electronics;
+Terminal=false

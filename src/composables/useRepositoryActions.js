@@ -63,7 +63,8 @@ export function useRepositoryActions(dialogs)
                 {
                     svnFolderPath: userStore.repository.path,
                     login: userStore.login,
-                    password: userStore.password
+                    password: userStore.password,
+                    url: userStore.repository.address,
                 })
             }
             else
@@ -98,7 +99,8 @@ export function useRepositoryActions(dialogs)
                 svnFolderPath: userStore.repository.path,
                 login: userStore.login,
                 password: userStore.password,
-                commitName: `Changes from ${userStore.login} (ONYKS Chalcedon)`
+                commitName: `Changes from ${userStore.login} (ONYKS Chalcedon)`,
+                url: userStore.repository.address,
             })
             await finish('Finishing...')
             return true

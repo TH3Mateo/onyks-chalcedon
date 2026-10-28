@@ -49,16 +49,18 @@
 
 <template>
 
-    <onyks-dialog :title="`Editing a ${props.subject}`" corner-close bottom-buttons modal ref="dialog">
-        <onyks-container type="stack" padding="" gap="l">
-            <onyks-text size="m">You are editing: {{ currentName }}.</onyks-text>
-            <onyks-text>Enter a new name of the {{ props.subject }} below:</onyks-text>
-            <onyks-textfield :placeholder="`New name of the ${props.subject}`" v-model="name" @input="error = ''"></onyks-textfield>
-            <onyks-text :class="error === '' ? 'error-invisible' : ''">{{ error }}</onyks-text>
-        </onyks-container>
-        <onyks-button background="green" slot="footer" @click="action" size="m">OK</onyks-button>
-        <onyks-button background="red" slot="footer" @click="dialog.open = false">Close</onyks-button>
-    </onyks-dialog>
+    <Teleport to="body">
+        <onyks-dialog :title="`Editing a ${props.subject}`" corner-close bottom-buttons modal ref="dialog">
+            <onyks-container type="stack" padding="" gap="l">
+                <onyks-text size="m">You are editing: {{ currentName }}.</onyks-text>
+                <onyks-text>Enter a new name of the {{ props.subject }} below:</onyks-text>
+                <onyks-textfield :placeholder="`New name of the ${props.subject}`" v-model="name" @input="error = ''"></onyks-textfield>
+                <onyks-text :class="error === '' ? 'error-invisible' : ''">{{ error }}</onyks-text>
+            </onyks-container>
+            <onyks-button background="green" slot="footer" @click="action" size="m">OK</onyks-button>
+            <onyks-button background="red" slot="footer" @click="dialog.open = false">Close</onyks-button>
+        </onyks-dialog>
+    </Teleport>
 
 </template>
 

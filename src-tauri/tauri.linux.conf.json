@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "targets": ["deb", "rpm"],
+    "resources": [],
+    "linux": {
+      "deb": {
+        "depends": ["subversion", "unixodbc", "odbc-postgresql"],
+        "recommends": ["tailscale"]
+      },
+      "rpm": {
+        "depends": ["subversion", "unixODBC", "postgresql-odbc"]
+      }
+    }
+  }
+}

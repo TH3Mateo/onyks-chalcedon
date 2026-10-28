@@ -59,14 +59,19 @@
 
 
 <template>
-    <onyks-dialog :title="`Select a ${props.title}`" corner-close bottom-buttons modal ref="dialog">
-        <onyks-container type="stack" padding="" gap="l">
-            <RepositoryExplorer :filter="props.filter" :root="props.root" ref="repositoryExplorer"></RepositoryExplorer>
-            <onyks-text v-if="error">{{ error }}</onyks-text>
-        </onyks-container>
-        <onyks-button background="green" slot="footer" @click="select">OK</onyks-button>
-        <onyks-button background="red" slot="footer" @click="dialog.open = false">Close</onyks-button>
-    </onyks-dialog>
+    <!-- Teleported to <body>: the dialog is position: fixed, and inside an ancestor with a
+         transform/filter/backdrop-filter (or a hover transition of the layout) a fixed element
+         is positioned against that ancestor instead of the window, so it jumped around. -->
+    <Teleport to="body">
+        <onyks-dialog :title="`Select a ${props.title}`" corner-close bottom-buttons modal ref="dialog">
+            <onyks-container type="stack" padding="" gap="l">
+                <RepositoryExplorer :filter="props.filter" :root="props.root" ref="repositoryExplorer"></RepositoryExplorer>
+                <onyks-text v-if="error">{{ error }}</onyks-text>
+            </onyks-container>
+            <onyks-button background="green" slot="footer" @click="select">OK</onyks-button>
+            <onyks-button background="red" slot="footer" @click="dialog.open = false">Close</onyks-button>
+        </onyks-dialog>
+    </Teleport>
 </template>
 
 <style lang="css" scoped>

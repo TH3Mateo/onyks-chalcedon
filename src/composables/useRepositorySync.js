@@ -40,6 +40,7 @@ async function pullOnce()
                 svnFolderPath: userStore.repository.path,
                 login: userStore.login,
                 password: userStore.password,
+                url: userStore.repository.address,
             })
         }
         else
@@ -89,6 +90,7 @@ async function pushOnce()
             login: userStore.login,
             password: userStore.password,
             commitName: `Autopush from ${userStore.login} (ONYKS Chalcedon)`,
+            url: userStore.repository.address,
         })
         status.value.lastPush = new Date()
         status.value.error = ''

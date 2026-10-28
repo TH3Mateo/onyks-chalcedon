@@ -56,19 +56,21 @@
 </script>
 
 <template>
-    <onyks-dialog :title="`Deleting`" corner-close bottom-buttons modal ref="dialog" @dialog-close="emit('success')">
-        <onyks-container type="stack" padding="" gap="l" style="overflow-y: hidden;">
-            <slot name="top"></slot>
-            <onyks-text>You are deleting {{ items.length }} {{ props.subject }}:</onyks-text>
-            <onyks-loading-bar striped animated .max="`${items.length}`" :current-state="currentCounter" color="blue" size="m"></onyks-loading-bar>
-            <onyks-container type="stack" gap="l" style="overflow-y: scroll">
-                <onyks-text v-for="item in items" size="s">{{ props.formater(item) }}</onyks-text>
+    <Teleport to="body">
+        <onyks-dialog :title="`Deleting`" corner-close bottom-buttons modal ref="dialog" @dialog-close="emit('success')">
+            <onyks-container type="stack" padding="" gap="l" style="overflow-y: hidden;">
+                <slot name="top"></slot>
+                <onyks-text>You are deleting {{ items.length }} {{ props.subject }}:</onyks-text>
+                <onyks-loading-bar striped animated .max="`${items.length}`" :current-state="currentCounter" color="blue" size="m"></onyks-loading-bar>
+                <onyks-container type="stack" gap="l" style="overflow-y: scroll">
+                    <onyks-text v-for="item in items" size="s">{{ props.formater(item) }}</onyks-text>
+                </onyks-container>
+                <onyks-text :class="error === '' ? 'error-invisible' : ''">{{ error }}</onyks-text>
             </onyks-container>
-            <onyks-text :class="error === '' ? 'error-invisible' : ''">{{ error }}</onyks-text>
-        </onyks-container>
-        <onyks-button background="green" slot="footer" @click="action" size="m">OK</onyks-button>
-        <onyks-button background="red" slot="footer" @click="() => {dialog.open = false; emit('success')}">Close</onyks-button>
-    </onyks-dialog>
+            <onyks-button background="green" slot="footer" @click="action" size="m">OK</onyks-button>
+            <onyks-button background="red" slot="footer" @click="() => {dialog.open = false; emit('success')}">Close</onyks-button>
+        </onyks-dialog>
+    </Teleport>
 </template>
 
 <style lang="css" scoped>

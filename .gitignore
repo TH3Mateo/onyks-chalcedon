@@ -23,3 +23,6 @@ dist-ssr
 *.sln
 *.sw?
 .claude/
+
+# Bundled installers (fetched by scripts/fetch-redist.ps1)
+src-tauri/redist/*.msi

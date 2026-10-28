@@ -5,6 +5,8 @@
     import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
     import { useDbLibSync } from '../../composables/useDbLibSync.js';
     import { useRepositorySync } from '../../composables/useRepositorySync.js';
+    import { useTailscale } from '../../composables/useTailscale.js';
+    import { useServerDiscovery, portOf, replaceHost } from '../../composables/useServerDiscovery.js';
 
     const userStore = useUserStore()
     const visibleSettings = ref(JSON.parse(JSON.stringify(userStore.$state)))
@@ -13,12 +15,32 @@
     {
         await userStore.loadSettings()
         visibleSettings.value = JSON.parse(JSON.stringify(userStore.$state))
+        showNotice('success', 'Changes discarded.')
+    }
+
+    // Feedback for Save / Reset: a short-lived alert above the buttons.
+    const notice = ref({ type: 'success', text: '' })
+    let noticeTimer = null
+
+    const showNotice = (type, text) =>
+    {
+        notice.value = { type, text }
+        clearTimeout(noticeTimer)
+        noticeTimer = setTimeout(() => { notice.value.text = '' }, 3000)
     }
 
     const save = async () =>
     {
-        userStore.$patch(JSON.parse(JSON.stringify(visibleSettings.value)))
-        await userStore.saveSettings()
+        try
+        {
+            userStore.$patch(JSON.parse(JSON.stringify(visibleSettings.value)))
+            await userStore.saveSettings()
+            showNotice('success', 'Settings saved.')
+        }
+        catch (error)
+        {
+            showNotice('error', `Could not save the settings: ${error}`)
+        }
     }
 
     const chooseRepositoryPath = async () =>
@@ -53,6 +75,43 @@
         await syncDbLib()
     }
 
+    const { status: tailscaleStatus, connectTailscale } = useTailscale()
+
+    const chooseTailscaleKeyPath = async () =>
+    {
+        const file = await open({
+            multiple: false,
+            directory: false,
+            filters: [{ name: 'Text file', extensions: ['txt'] }]
+        });
+
+        if(file)
+        {
+            visibleSettings.value.tailscale.authKeyPath = file
+        }
+    }
+
+    const connectTailscaleNow = async () =>
+    {
+        await save()
+        await connectTailscale()
+    }
+
+    const { status: discoveryStatus, discoverServers } = useServerDiscovery()
+
+    const findServer = () => discoverServers(portOf(visibleSettings.value.webManagerAddress))
+
+    // The web manager lives on the same machine as the SVN server, so the repository
+    // address (if already filled in) follows the new IP too.
+    const useServer = (server) =>
+    {
+        visibleSettings.value.webManagerAddress = server.address
+        if (visibleSettings.value.repository.address)
+        {
+            visibleSettings.value.repository.address = replaceHost(visibleSettings.value.repository.address, server.ip)
+        }
+    }
+
     const formatTime = (date) => date ? date.toLocaleString() : 'never'
 </script>
 
@@ -72,6 +131,25 @@
             <onyks-text size="m">Address</onyks-text>
             <onyks-textfield size="m" v-model="visibleSettings.webManagerAddress" placeholder="e.g http://192.168.1.10:8113"></onyks-textfield>
         </onyks-container>
+
+        <onyks-text size="s">
+            "Find server" searches the local network (also over VPN / Tailscale) for the ONYKS server,
+            so you do not have to look up its IP address. Using a found server also updates the host
+            in the repository address below.
+        </onyks-text>
+
+        <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-text size="s" v-if="discoveryStatus.running">Searching the network...</onyks-text>
+            <onyks-text size="s" v-else-if="discoveryStatus.searched && discoveryStatus.servers.length == 0">No server found.</onyks-text>
+            <onyks-button background="blue" @click="findServer" :disabled="discoveryStatus.running">Find server</onyks-button>
+        </onyks-container>
+
+        <onyks-container v-for="server in discoveryStatus.servers" :key="server.ip" gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-text size="s">{{ server.address }} {{ server.verified ? '· ONYKS server' : '· unknown service' }}</onyks-text>
+            <onyks-button background="green" @click="useServer(server)">Use</onyks-button>
+        </onyks-container>
+
+        <onyks-alert v-if="discoveryStatus.error" type="error">{{ discoveryStatus.error }}</onyks-alert>
 
         <onyks-header level="4">Database</onyks-header>
 
@@ -163,6 +241,36 @@
         </onyks-container>
 
         <onyks-alert v-if="repositoryStatus.error" type="error">{{ repositoryStatus.error }}</onyks-alert>
+
+        <onyks-header level="4">Tailscale</onyks-header>
+
+        <onyks-text size="s">
+            With this option on, the program starts the Tailscale client when it starts and signs in
+            to your Tailscale network with the personal auth key from the text file selected below.
+            Only the path to the file is stored in the settings, never the key itself.
+        </onyks-text>
+
+        <onyks-container type="grid" cols="2" gap="l" padding="">
+            <onyks-text size="m">Connect to Tailscale on startup</onyks-text>
+            <onyks-checkbox size="l" :checked="visibleSettings.tailscale.autostart" @click="() => {visibleSettings.tailscale.autostart = !visibleSettings.tailscale.autostart}"></onyks-checkbox>
+            <onyks-text size="m">Auth Key File (.txt)</onyks-text>
+            <onyks-textfield size="m" v-model="visibleSettings.tailscale.authKeyPath" placeholder="e.g C:/User/tailscale_key.txt" disabled></onyks-textfield>
+        </onyks-container>
+
+        <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-button background="yellow" @click="chooseTailscaleKeyPath">Select</onyks-button>
+        </onyks-container>
+
+        <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-text size="s">
+                {{ tailscaleStatus.lastConnect ? `Last connection: ${formatTime(tailscaleStatus.lastConnect)} · ${tailscaleStatus.message}` : 'Not connected in this session.' }}
+            </onyks-text>
+            <onyks-button background="blue" @click="connectTailscaleNow" :disabled="tailscaleStatus.running || !visibleSettings.tailscale.authKeyPath">Connect now</onyks-button>
+        </onyks-container>
+
+        <onyks-alert v-if="tailscaleStatus.error" type="error">{{ tailscaleStatus.error }}</onyks-alert>
+
+        <onyks-alert v-if="notice.text" :type="notice.type">{{ notice.text }}</onyks-alert>
 
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
             <onyks-button background="green" @click="save">Save</onyks-button>
