@@ -1,14 +1,16 @@
 {
   "bundle": {
     "targets": ["deb", "rpm"],
-    "resources": [],
+    "resources": ["converter/*.py"],
     "linux": {
       "deb": {
-        "depends": ["subversion", "unixodbc", "odbc-postgresql"],
-        "recommends": ["tailscale"]
+        "depends": ["subversion", "unixodbc", "odbc-postgresql", "python3"],
+        "recommends": ["tailscale"],
+        "postInstallScript": "../packaging/linux/enable-tailscaled.sh"
       },
       "rpm": {
-        "depends": ["subversion", "unixODBC", "postgresql-odbc"]
+        "depends": ["subversion", "unixODBC", "postgresql-odbc", "python3"],
+        "postInstallScript": "../packaging/linux/enable-tailscaled.sh"
       }
     }
   }

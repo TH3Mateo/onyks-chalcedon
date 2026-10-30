@@ -56,14 +56,15 @@ export const useUserStore = defineStore('user', () =>
         path: ''
     })
 
-    // The server address comes from webManagerAddress; dblibPath is the local Altium
-    // .DbLib file kept up to date with the database.
+    // The server address comes from webManagerAddress; dblibPath / kicadDblPath is the local
+    // Altium .DbLib / KiCad .kicad_dbl file (by the account's CAD tool) kept up to date with the database.
     const defaultDatabase = () => (
     {
         autoupdate: false,
         autoupdateInterval: 5,
         lastLocalCheckUpdate: 0,
-        dblibPath: ''
+        dblibPath: '',
+        kicadDblPath: ''
     })
 
     // autostart: connect to Tailscale when the program starts, using the auth key

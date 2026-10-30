@@ -12,6 +12,7 @@ Laczy sie z serwerem **ONYKS Bloodstone** (web GUI, baza, SVN z bibliotekami Sch
 |---|---|---|
 | System | Windows 10/11 64-bit | dystrybucja z WebKitGTK 4.1 |
 | SVN (klient `svn`) | instalowany automatycznie | zaleznosc pakietu (`subversion`) |
+| Python 3 (tylko zakladka Convert) | Windows: zainstaluj recznie; Linux: zaleznosc pakietu | `python3` / `python` |
 | Sterownik ODBC PostgreSQL | instalowany automatycznie | `odbc-postgresql` / `postgresql-odbc` / `psqlodbc` |
 | Tailscale (opcjonalnie) | instalowany automatycznie | osobno, jesli potrzebny |
 | Serwer Bloodstone | dostepny w sieci / przez VPN | j.w. |
@@ -51,20 +52,25 @@ Pakiety znajduja sie w katalogu `dist-linux/` (albo w wydaniu projektu).
 ```bash
 sudo apt install "./ONYKS Chalcedon_0.1.0_amd64.deb"
 ```
-Zaleznosci (`subversion`, `unixodbc`, `odbc-postgresql`) zostana doinstalowane. `tailscale` jest zalecany, nie wymagany.
+Uzyj dokladnie `apt install ./plik.deb` (nie `dpkg -i`): tylko `apt` doinstaluje zaleznosci (`subversion`, `unixodbc`, `odbc-postgresql`).
+`tailscale` jest zalecany, ale nie ma go w domyslnych repozytoriach - zainstaluj go wg instrukcji tailscale.com, jesli chcesz z niego korzystac.
 
 **Fedora / openSUSE (RPM)**
 ```bash
 sudo dnf install "./ONYKS Chalcedon-0.1.0-1.x86_64.rpm"
 ```
-Zaleznosci: `subversion`, `unixODBC`, `postgresql-odbc`.
+Zaleznosci: `subversion`, `unixODBC`, `postgresql-odbc` (nazwy z Fedory; na openSUSE sterownik nazywa sie `psqlODBC` - zainstaluj go recznie).
 
-**Arch Linux**
+**Arch Linux** - gotowy pakiet:
+```bash
+sudo pacman -U onyks-chalcedon-0.1.0-1-x86_64.pkg.tar.zst
+```
+albo budowanie ze zrodel (kompilacja trwa kilka minut):
 ```bash
 cd packaging/arch
 makepkg -si
 ```
-Sterownik `psqlodbc` jest tylko w AUR - zainstaluj go pomocnikiem AUR, jesli korzystasz z bibliotek bazy w Altium/KiCad.
+Pakiet zalezy od `webkit2gtk-4.1`, `gtk3`, `subversion`, `unixodbc`, `tailscale` (wszystkie doinstalowuje pacman). Sterownik `psqlodbc` jest tylko w AUR - zainstaluj go pomocnikiem AUR, jesli korzystasz z bibliotek bazy w Altium/KiCad.
 Aby zbudowac z lokalnego repozytorium zamiast z GitHuba: `CHALCEDON_REPO=file:///sciezka/do/repo makepkg -si`.
 
 Uruchomienie: z menu aplikacji albo poleceniem `onyks-chalcedon`.
@@ -154,6 +160,15 @@ Pozwala laczyc sie z serwerem przez VPN Tailscale bez recznego logowania.
 W ustawieniach zapisywana jest tylko sciezka do pliku, nigdy sam klucz.
 
 ![Sekcja Tailscale](img/settings-tailscale.png)
+
+### 5.6 Convert (KiCad -> Altium)
+
+Zakladka **Convert** (ikona strzalek w lewym menu) zamienia biblioteki KiCad na pliki Altium:
+symbole `.kicad_sym` -> `.SchLib`, footprinty `.kicad_mod` lub folder `.pretty` -> `.PcbLib`.
+Wybierz pliki wejsciowe, folder wyjsciowy (opcjonalnie nazwe biblioteki) i kliknij **Convert**.
+Wynik i ostrzezenia konwertera widac w oknie na dole. Wymaga zainstalowanego Pythona 3.
+
+![Zakladka Convert](img/convert.png)
 
 ## 6. Sprawdzenie, czy dziala
 

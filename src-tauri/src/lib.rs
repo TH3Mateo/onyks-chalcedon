@@ -610,11 +610,23 @@ fn tailscale_connect(auth_key_path: &str) -> Result<String, String> {
         return Ok("Tailscale jest już połączony.".to_string());
     }
 
-    let output = tailscale_command(&cli)
-        .args(["login", "--timeout=60s"])
-        .arg(format!("--auth-key={}", key))
-        .output()
-        .map_err(|e| format!("Błąd uruchomienia tailscale: {}", e))?;
+    let login = || {
+        tailscale_command(&cli)
+            .args(["login", "--timeout=60s"])
+            .arg(format!("--auth-key={}", key))
+            .output()
+            .map_err(|e| format!("Błąd uruchomienia tailscale: {}", e))
+    };
+
+    let mut output = login()?;
+
+    // On Linux the daemon only accepts commands from root until an "operator" is set.
+    // `tailscale up --operator=$USER --auth-key=...` as root logs in and sets the operator
+    // in one step (graphical password prompt through polkit).
+    #[cfg(target_os = "linux")]
+    if !output.status.success() && tailscale_needs_operator(&output) {
+        output = tailscale_up_as_operator(&cli, &key)?;
+    }
 
     if output.status.success() {
         start_tailscale_client();
@@ -625,6 +637,45 @@ fn tailscale_connect(auth_key_path: &str) -> Result<String, String> {
         let message = if stderr.trim().is_empty() { stdout } else { stderr };
         Err(format!("tailscale login: {}", redact(message.trim(), &key)))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn tailscale_needs_operator(output: &std::process::Output) -> bool {
+    let text = format!(
+        "{} {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    )
+    .to_lowercase();
+    text.contains("access denied") || text.contains("--operator")
+}
+
+// `sudo tailscale up --operator=$USER --auth-key=<key>` through polkit, so it works from the app.
+#[cfg(target_os = "linux")]
+fn tailscale_up_as_operator(cli: &str, key: &str) -> Result<std::process::Output, String> {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_default();
+    let valid = !user.is_empty()
+        && user != "root"
+        && user.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    if !valid {
+        return Err("Tailscale odmówił dostępu. Wykonaj w terminalu: sudo tailscale up --operator=$USER --auth-key=<klucz>".to_string());
+    }
+
+    Command::new("pkexec")
+        .arg(cli)
+        .arg("up")
+        .arg("--timeout=60s")
+        .arg(format!("--operator={}", user))
+        .arg(format!("--auth-key={}", key))
+        .output()
+        .map_err(|e| {
+            format!(
+                "Tailscale odmówił dostępu, a pkexec nie działa ({}). Wykonaj w terminalu: sudo tailscale up --operator=$USER --auth-key=<klucz>",
+                e
+            )
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -726,6 +777,82 @@ fn discover_servers(port: u16) -> Vec<String> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// KiCad -> Altium conversion: runs the bundled kicad2altium.py (copy of
+// onyks-bloodstone/converter, pure standard library) with the system Python.
+fn python_candidates() -> &'static [&'static str] {
+    if cfg!(target_os = "windows") {
+        &["python", "py", "python3"]
+    } else {
+        &["python3", "python"]
+    }
+}
+
+#[tauri::command]
+fn convert_kicad_to_altium(
+    app: tauri::AppHandle,
+    sym: Vec<String>,
+    fp: Vec<String>,
+    out: String,
+    name: Option<String>,
+) -> Result<String, String> {
+    if sym.is_empty() && fp.is_empty() {
+        return Err("Wybierz pliki .kicad_sym i/lub .kicad_mod / katalog .pretty.".to_string());
+    }
+    if out.trim().is_empty() {
+        return Err("Wybierz katalog wyjściowy.".to_string());
+    }
+
+    let script = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("Brak katalogu zasobów: {}", e))?
+        .join("converter")
+        .join("kicad2altium.py");
+    if !script.exists() {
+        return Err(format!("Nie znaleziono konwertera: {}", script.display()));
+    }
+
+    let mut last_error = String::new();
+    for python in python_candidates() {
+        let mut command = Command::new(python);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        command.env("PYTHONIOENCODING", "utf-8").arg(&script);
+        if !sym.is_empty() {
+            command.arg("--sym").args(&sym);
+        }
+        if !fp.is_empty() {
+            command.arg("--fp").args(&fp);
+        }
+        command.arg("-o").arg(&out);
+        if let Some(name) = name.as_ref().filter(|n| !n.trim().is_empty()) {
+            command.arg("--name").arg(name.trim());
+        }
+
+        match command.output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let text = format!("{}{}", stdout, stderr).trim().to_string();
+                if output.status.success() {
+                    return Ok(text);
+                }
+                // The Microsoft Store stub of "python" exits non-zero without running anything.
+                if text.is_empty() || text.contains("Python was not found") {
+                    last_error = format!("{} nie uruchomił konwertera.", python);
+                    continue;
+                }
+                return Err(text);
+            }
+            Err(e) => last_error = format!("{}: {}", python, e),
+        }
+    }
+    Err(format!(
+        "Nie znaleziono Pythona 3 (wymagany do konwersji). Zainstaluj go i spróbuj ponownie. ({})",
+        last_error
+    ))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -762,7 +889,8 @@ pub fn run() {
             write_binary_file,
             list_directory,
             tailscale_connect,
-            discover_servers
+            discover_servers,
+            convert_kicad_to_altium
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

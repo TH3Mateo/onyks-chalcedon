@@ -53,7 +53,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "resources": ["redist/*"],
+    "resources": ["redist/*", "converter/*.py"],
     "windows": {
       "nsis": {
         "installMode": "perMachine",

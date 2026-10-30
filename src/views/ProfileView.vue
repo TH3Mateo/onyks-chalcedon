@@ -24,6 +24,7 @@
                 <RouterLink to="/profile/web" title="Web Manager"><onyks-strip-menu-option size="m" icon="F43C" :selected="route.path.startsWith('/profile/web')"></onyks-strip-menu-option></RouterLink>
                 <RouterLink to="/profile/repository" title="Repository"><onyks-strip-menu-option size="m" icon="F10D" :selected="route.path == '/profile/repository'"></onyks-strip-menu-option></RouterLink>
                 <RouterLink to="/profile/settings" title="Settings"><onyks-strip-menu-option size="m" icon="F3E3" :selected="route.path == '/profile/settings'"></onyks-strip-menu-option></RouterLink>
+                <RouterLink to="/profile/convert" title="Convert KiCad to Altium"><onyks-strip-menu-option size="m" icon="F130" :selected="route.path == '/profile/convert'"></onyks-strip-menu-option></RouterLink>
                 <onyks-strip-menu-option size="m" icon="F297" title="Push the repository" :class="{busy: repositoryBusy}" @click="repositoryAction('push')"></onyks-strip-menu-option>
                 <onyks-strip-menu-option size="m" icon="F295" title="Pull the repository" :class="{busy: repositoryBusy}" @click="repositoryAction('pull')"></onyks-strip-menu-option>
                 <onyks-strip-menu-option size="m" icon="F431" title="About the program" @click="dialogs.about.open"></onyks-strip-menu-option>

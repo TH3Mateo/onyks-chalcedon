@@ -3,8 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { useUserStore } from '../stores/user.js'
 import { serverAddress, createClient } from '../web/utils/http.js'
 import { buildDbLib, normalize } from '../utils/dblib.js'
+import { buildKicadDbl, normalizeKicadDbl } from '../utils/kicaddbl.js'
+import { detectTool } from './useCadTool.js'
 
-// Keeps the local Altium .DbLib file in step with the database: a new category table
+// Keeps the local library file in step with the database - the Altium .DbLib or, for
+// an account that uses KiCad, the .kicad_dbl. Altium: a new category table
 // (e.g. batteries) gets its [TableN] section and field maps, a new supplier gets its
 // code column mapped in every table. What the user configured in Altium stays - see
 // utils/dblib.js for what is kept and what is generated.
@@ -18,6 +21,7 @@ const status = ref({
     running: false,
     lastCheck: null,
     lastChange: null,
+    tool: null,    // 'altium' | 'kicad', as reported by the server for the account
     error: '',
 })
 
@@ -36,18 +40,50 @@ async function fetchAll(url)
     }
 }
 
+async function updateAltiumDbLib(path)
+{
+    // Ordered by id, so new categories are appended after the existing ones.
+    const tables = (await fetchAll('/table/list')).map((table) => table.name)
+    // Not ordered by the server; sorted so the file does not change just because
+    // the database returned the rows in a different order.
+    const suppliers = (await fetchAll('/supplier/list')).sort((a, b) => a.id - b.id)
+
+    const existing = await invoke('read_text_file', { path })
+    const content = buildDbLib(existing, tables, suppliers)
+    const changed = existing === null || normalize(existing) !== normalize(content)
+
+    if (changed)
+    {
+        await invoke('write_text_file', { path, content })
+    }
+    return changed
+}
+
+async function updateKicadDbl(path)
+{
+    const generated = (await api.get('/settings/kicad-dbl')).data
+    if (generated === null || typeof generated !== 'object')
+    {
+        throw new Error('The server returned an unexpected KiCad library description.')
+    }
+
+    const existing = await invoke('read_text_file', { path })
+    const content = buildKicadDbl(existing, generated)
+    const changed = existing === null || normalizeKicadDbl(existing) !== normalizeKicadDbl(content)
+
+    if (changed)
+    {
+        await invoke('write_text_file', { path, content })
+    }
+    return changed
+}
+
 export async function syncDbLib()
 {
     const userStore = useUserStore()
-    const path = userStore.database.dblibPath
 
     if (status.value.running)
     {
-        return false
-    }
-    if (!path)
-    {
-        status.value.error = 'The path of the DbLib file is unset.'
         return false
     }
     if (serverAddress() === '')
@@ -59,22 +95,20 @@ export async function syncDbLib()
     status.value.running = true
     try
     {
-        // Ordered by id, so new categories are appended after the existing ones.
-        const tables = (await fetchAll('/table/list')).map((table) => table.name)
-        // Not ordered by the server; sorted so the file does not change just because
-        // the database returned the rows in a different order.
-        const suppliers = (await fetchAll('/supplier/list')).sort((a, b) => a.id - b.id)
-
-        const existing = await invoke('read_text_file', { path })
-        const content = buildDbLib(existing, tables, suppliers)
-        const changed = existing === null || normalize(existing) !== normalize(content)
-
-        if (changed)
+        status.value.tool = await detectTool()
+        const kicad = status.value.tool === 'kicad'
+        const path = kicad ? userStore.database.kicadDblPath : userStore.database.dblibPath
+        if (!path)
         {
-            await invoke('write_text_file', { path, content })
-            status.value.lastChange = new Date()
+            status.value.error = kicad ? 'The path of the .kicad_dbl file is unset.' : 'The path of the DbLib file is unset.'
+            return false
         }
 
+        const changed = kicad ? await updateKicadDbl(path) : await updateAltiumDbLib(path)
+        if (changed)
+        {
+            status.value.lastChange = new Date()
+        }
         status.value.lastCheck = new Date()
         status.value.error = ''
         return changed
@@ -109,13 +143,16 @@ export function startDbLibAutoupdate()
         userStore.database.autoupdate,
         userStore.database.autoupdateInterval,
         userStore.database.dblibPath,
+        userStore.database.kicadDblPath,
+        userStore.login,
+        userStore.password,
         userStore.webManagerAddress,
     ], () =>
     {
         clearInterval(timer)
         timer = null
 
-        if (!userStore.isReady || !userStore.database.autoupdate || !userStore.database.dblibPath)
+        if (!userStore.isReady || !userStore.database.autoupdate || !(userStore.database.dblibPath || userStore.database.kicadDblPath))
         {
             return
         }

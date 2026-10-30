@@ -85,6 +85,15 @@ async function discoverServers(port = DEFAULT_PORT)
     }
 }
 
+// SVN repository of the ONYKS server: same machine as the web manager, fixed port and name.
+export const SVN_PORT = 8111
+export const SVN_REPOSITORY = 'part_library'
+
+export function defaultRepositoryAddress(ip)
+{
+    return `http://${ip}:${SVN_PORT}/svn/${SVN_REPOSITORY}`
+}
+
 // Same address with the host replaced (the port, path and scheme stay), e.g. an SVN
 // repository address after the server got a new IP. Returns the input when it is not
 // a valid URL.

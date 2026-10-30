@@ -12,20 +12,20 @@ pkgdesc='PC app for managing the ONYKS PCB element library (companion of ONYKS B
 arch=('x86_64')
 url='https://github.com/TH3Mateo/onyks-chalcedon'
 license=('custom')
-depends=('webkit2gtk-4.1' 'gtk3' 'subversion' 'unixodbc' 'libsodium')
-optdepends=('psqlodbc: PostgreSQL ODBC driver for database libraries (AUR only)'
-            'tailscale: connect to the server over a VPN')
+depends=('webkit2gtk-4.1' 'gtk3' 'subversion' 'unixodbc' 'tailscale' 'python')
+optdepends=('psqlodbc: PostgreSQL ODBC driver for database libraries (AUR only)')
 makedepends=('rust' 'nodejs' 'pnpm' 'git' 'pkgconf' 'openssl' 'libayatana-appindicator' 'librsvg' 'xdotool')
 source=("$pkgname::git+${CHALCEDON_REPO:-$url.git}"
         'onyks-chalcedon.desktop')
 sha256sums=('SKIP' 'SKIP')
+# makepkg's default CFLAGS contain -flto; the C code built by ring and libsodium-sys-stable
+# then ends up as LTO bitcode that rustc's linker cannot use (undefined ring_core_*/sodium_*).
+options=('!lto')
+install=onyks-chalcedon.install
 
 build() {
   cd "$srcdir/$pkgname"
   pnpm install --frozen-lockfile
-  # Use the system libsodium instead of letting libsodium-sys-stable (tauri-plugin-stronghold)
-  # build its own copy: that copy is not linked on Arch (undefined sodium_* symbols).
-  export SODIUM_USE_PKG_CONFIG=1
   # --no-bundle: only the binary (with the frontend embedded); pacman is the packager.
   pnpm tauri build --no-bundle
 }
@@ -33,6 +33,9 @@ build() {
 package() {
   cd "$srcdir/$pkgname"
   install -Dm755 src-tauri/target/release/onyks-chalcedon "$pkgdir/usr/bin/onyks-chalcedon"
+  # Resources are looked up in /usr/lib/<productName> (same place as in the deb).
+  install -Dm644 src-tauri/converter/kicad2altium.py "$pkgdir/usr/lib/ONYKS Chalcedon/converter/kicad2altium.py"
+  install -Dm644 src-tauri/converter/altium_templates.py "$pkgdir/usr/lib/ONYKS Chalcedon/converter/altium_templates.py"
   install -Dm644 "$srcdir/onyks-chalcedon.desktop" "$pkgdir/usr/share/applications/onyks-chalcedon.desktop"
   install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/onyks-chalcedon.png"
 }
