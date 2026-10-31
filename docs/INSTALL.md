@@ -21,7 +21,7 @@ Potrzebujesz tez: **loginu i hasla** do serwera (to samo konto do web GUI i SVN)
 
 ## 2. Instalacja - Windows
 
-1. Pobierz instalator `ONYKS Chalcedon_0.1.0_x64-setup.exe`.
+1. Pobierz instalator `ONYKS Chalcedon_1.2.0_x64-setup.exe`.
 2. Uruchom go i przejdz kreator. Doinstalowanie sterownika ODBC i SVN wymaga uprawnien administratora - zatwierdz monit UAC.
 3. Instalator **po cichu doinstaluje brakujace skladniki**:
    - Subversion (TortoiseSVN z klientem `svn`) - jesli polecenie `svn` nie istnieje,
@@ -41,7 +41,7 @@ pnpm install
 pnpm tauri build
 ```
 
-Wynik: `src-tauri/target/release/bundle/nsis/ONYKS Chalcedon_0.1.0_x64-setup.exe`.
+Wynik: `src-tauri/target/release/bundle/nsis/ONYKS Chalcedon_1.2.0_x64-setup.exe`.
 Pliki `.msi` w `src-tauri/redist/` nie sa w gicie.
 
 ## 3. Instalacja - Linux
@@ -50,20 +50,20 @@ Pakiety znajduja sie w katalogu `dist-linux/` (albo w wydaniu projektu).
 
 **Debian / Ubuntu**
 ```bash
-sudo apt install "./ONYKS Chalcedon_0.1.0_amd64.deb"
+sudo apt install "./ONYKS Chalcedon_1.2.0_amd64.deb"
 ```
 Uzyj dokladnie `apt install ./plik.deb` (nie `dpkg -i`): tylko `apt` doinstaluje zaleznosci (`subversion`, `unixodbc`, `odbc-postgresql`).
 `tailscale` jest zalecany, ale nie ma go w domyslnych repozytoriach - zainstaluj go wg instrukcji tailscale.com, jesli chcesz z niego korzystac.
 
 **Fedora / openSUSE (RPM)**
 ```bash
-sudo dnf install "./ONYKS Chalcedon-0.1.0-1.x86_64.rpm"
+sudo dnf install "./ONYKS Chalcedon-1.2.0-1.x86_64.rpm"
 ```
 Zaleznosci: `subversion`, `unixODBC`, `postgresql-odbc` (nazwy z Fedory; na openSUSE sterownik nazywa sie `psqlODBC` - zainstaluj go recznie).
 
 **Arch Linux** - gotowy pakiet:
 ```bash
-sudo pacman -U onyks-chalcedon-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U onyks-chalcedon-1.2.0-1-x86_64.pkg.tar.zst
 ```
 albo budowanie ze zrodel (kompilacja trwa kilka minut):
 ```bash

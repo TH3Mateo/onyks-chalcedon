@@ -4,6 +4,7 @@
     import { ref } from 'vue';
     import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
     import { useDbLibSync } from '../../composables/useDbLibSync.js';
+    import { useOdbcSource } from '../../composables/useOdbcSource.js';
     import { useRepositorySync } from '../../composables/useRepositorySync.js';
     import { useTailscale } from '../../composables/useTailscale.js';
     import { useServerDiscovery, portOf, replaceHost, defaultRepositoryAddress } from '../../composables/useServerDiscovery.js';
@@ -86,6 +87,14 @@
     {
         await save()
         await syncDbLib()
+    }
+
+    const { status: odbcStatus, setupOdbcSource } = useOdbcSource()
+
+    const setupOdbcNow = async () =>
+    {
+        await save()
+        await setupOdbcSource(true)
     }
 
     const { status: tailscaleStatus, connectTailscale } = useTailscale()
@@ -187,7 +196,10 @@
         </onyks-text>
 
         <onyks-container v-if="dblibStatus.tool !== 'kicad'" type="grid" cols="2" gap="l" padding="">
-            <onyks-text size="m">DbLib File Path (Altium)</onyks-text>
+            <div>
+                <onyks-text size="m">Database library file path</onyks-text>
+                <onyks-text size="s" style="display: block; opacity: 0.5;">(DbLib)</onyks-text>
+            </div>
             <onyks-textfield size="m" v-model="visibleSettings.database.dblibPath" placeholder="e.g C:/User/onyks_bloodstone.DbLib" disabled></onyks-textfield>
         </onyks-container>
 
@@ -196,7 +208,10 @@
         </onyks-container>
 
         <onyks-container v-if="dblibStatus.tool !== 'altium'" type="grid" cols="2" gap="l" padding="">
-            <onyks-text size="m">.kicad_dbl File Path (KiCad)</onyks-text>
+            <div>
+                <onyks-text size="m">Database library file path</onyks-text>
+                <onyks-text size="s" style="display: block; opacity: 0.5;">(kicad_dbl)</onyks-text>
+            </div>
             <onyks-textfield size="m" v-model="visibleSettings.database.kicadDblPath" placeholder="e.g C:/User/onyks_bloodstone.kicad_dbl" disabled></onyks-textfield>
         </onyks-container>
 
@@ -225,6 +240,20 @@
         </onyks-container>
 
         <onyks-alert v-if="dblibStatus.error" type="error">{{ dblibStatus.error }}</onyks-alert>
+
+        <onyks-text size="s">
+            ODBC data source "bloodstone": the program creates it for your user from the login and password above
+            (database altium_lib or kicad_lib, depending on the account) and refreshes it whenever they change.
+            The password is stored in that data source (the registry of your Windows account or ~/.odbc.ini,
+            readable only by you) - not in the library file.
+        </onyks-text>
+
+        <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+            <onyks-text size="s" v-if="odbcStatus.message && !odbcStatus.error">{{ odbcStatus.message }}</onyks-text>
+            <onyks-button background="blue" @click="setupOdbcNow">Set up ODBC source</onyks-button>
+        </onyks-container>
+
+        <onyks-alert v-if="odbcStatus.error" type="error">{{ odbcStatus.error }}</onyks-alert>
 
         <onyks-header level="4">Repository</onyks-header>
 

@@ -6,7 +6,7 @@
 # The SVN client that the Windows installer bundles as an MSI is a regular dependency here.
 # psqlodbc exists only in the AUR, so it is optional (install it with an AUR helper).
 pkgname=onyks-chalcedon
-pkgver=0.1.0
+pkgver=1.2.0
 pkgrel=1
 pkgdesc='PC app for managing the ONYKS PCB element library (companion of ONYKS Bloodstone)'
 arch=('x86_64')

@@ -5,6 +5,7 @@ import { serverAddress, createClient } from '../web/utils/http.js'
 import { buildDbLib, normalize } from '../utils/dblib.js'
 import { buildKicadDbl, normalizeKicadDbl } from '../utils/kicaddbl.js'
 import { detectTool } from './useCadTool.js'
+import { setupOdbcSource } from './useOdbcSource.js'
 
 // Keeps the local library file in step with the database - the Altium .DbLib or, for
 // an account that uses KiCad, the .kicad_dbl. Altium: a new category table
@@ -97,6 +98,8 @@ export async function syncDbLib()
     {
         status.value.tool = await detectTool()
         const kicad = status.value.tool === 'kicad'
+        // Keeps the data source in step with the login and password (no-op when nothing changed).
+        await setupOdbcSource()
         const path = kicad ? userStore.database.kicadDblPath : userStore.database.dblibPath
         if (!path)
         {

@@ -1,6 +1,6 @@
 [package]
 name = "onyks-chalcedon"
-version = "0.1.0"
+version = "1.2.0"
 description = "PC App for managing PCB elements database which cooparates which Onyks Bloodstone"
 authors = ["Karol Ambroziński", "Jakub Jastrzębski"]
 edition = "2021"
@@ -29,3 +29,6 @@ tauri-plugin-http = "2"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 if-addrs = "0.15.0"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

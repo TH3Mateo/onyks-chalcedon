@@ -853,6 +853,122 @@ fn convert_kicad_to_altium(
     ))
 }
 
+// ODBC data source for the CAD tools. The .DbLib / .kicad_dbl only name the source
+// ("bloodstone"); the connection and the login live here, in the user's own data source
+// (registry on Windows, ~/.odbc.ini on Linux), so no password reaches the library file
+// or the repository.
+fn odbc_value_ok(value: &str) -> bool {
+    !value.contains(['\n', '\r', '\0'])
+}
+
+#[cfg(target_os = "windows")]
+fn setup_odbc_source_impl(name: &str, host: &str, port: &str, database: &str, username: &str, password: &str) -> Result<String, String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+
+    let drivers = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers")
+        .map_err(|_| "Nie znaleziono sterowników ODBC (czy zainstalowano psqlODBC?).".to_string())?;
+    let names: Vec<String> = drivers.enum_values().filter_map(|v| v.ok()).map(|(n, _)| n).collect();
+    let driver = names
+        .iter()
+        .find(|n| n.starts_with("PostgreSQL Unicode"))
+        .or_else(|| names.iter().find(|n| n.contains("PostgreSQL")))
+        .ok_or("Nie znaleziono sterownika ODBC PostgreSQL (psqlODBC).")?
+        .clone();
+    let dll: String = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(format!(r"SOFTWARE\ODBC\ODBCINST.INI\{}", driver))
+        .and_then(|k| k.get_value("Driver"))
+        .map_err(|e| format!("Brak ścieżki sterownika {}: {}", driver, e))?;
+
+    let base = RegKey::predef(HKEY_CURRENT_USER);
+    let (sources, _) = base
+        .create_subkey(r"Software\ODBC\ODBC.INI\ODBC Data Sources")
+        .map_err(|e| e.to_string())?;
+    sources.set_value(name, &driver).map_err(|e| e.to_string())?;
+
+    let (key, _) = base
+        .create_subkey(format!(r"Software\ODBC\ODBC.INI\{}", name))
+        .map_err(|e| e.to_string())?;
+    for (k, v) in [
+        ("Driver", dll.as_str()),
+        ("Description", "ONYKS Bloodstone"),
+        ("Servername", host),
+        ("Port", port),
+        ("Database", database),
+        ("Username", username),
+        ("Password", password),
+    ] {
+        key.set_value(k, &v).map_err(|e| e.to_string())?;
+    }
+    Ok(format!("Użytkownik ODBC DSN \"{}\" ({}) zapisany w rejestrze.", name, driver))
+}
+
+#[cfg(target_os = "linux")]
+fn setup_odbc_source_impl(name: &str, host: &str, port: &str, database: &str, username: &str, password: &str) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let listed = Command::new("odbcinst").args(["-q", "-d"]).output().ok();
+    let names: Vec<String> = listed
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(|l| l.trim().trim_matches(['[', ']']).to_string()).collect())
+        .unwrap_or_default();
+    let driver = names
+        .iter()
+        .find(|n| n.starts_with("PostgreSQL Unicode"))
+        .or_else(|| names.iter().find(|n| n.contains("PostgreSQL")))
+        .cloned()
+        .ok_or("Nie znaleziono sterownika ODBC PostgreSQL (zainstaluj odbc-postgresql / postgresql-odbc / psqlodbc).")?;
+
+    let home = std::env::var("HOME").map_err(|_| "Brak $HOME.".to_string())?;
+    let path = Path::new(&home).join(".odbc.ini");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+
+    // Drop the old section of this source, keep everything else the user has.
+    let header = format!("[{}]", name);
+    let mut kept = String::new();
+    let mut skipping = false;
+    for line in existing.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            skipping = t.eq_ignore_ascii_case(&header);
+        }
+        if !skipping {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    let kept = kept.trim_end().to_string();
+    let section = format!(
+        "{}\nDescription = ONYKS Bloodstone\nDriver = {}\nServername = {}\nPort = {}\nDatabase = {}\nUsername = {}\nPassword = {}\n",
+        header, driver, host, port, database, username, password
+    );
+    let content = if kept.is_empty() { section } else { format!("{}\n\n{}", kept, section) };
+
+    let tmp = path.with_extension("ini.tmp");
+    fs::write(&tmp, content).map_err(|e| format!("Błąd zapisu {}: {}", tmp.display(), e))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(format!("ODBC DSN \"{}\" ({}) zapisany w {}.", name, driver, path.display()))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn setup_odbc_source_impl(_: &str, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+    Err("Konfiguracja ODBC jest obsługiwana tylko na Windows i Linux.".to_string())
+}
+
+#[tauri::command]
+fn setup_odbc_source(name: String, host: String, port: String, database: String, username: String, password: String) -> Result<String, String> {
+    for value in [&name, &host, &port, &database, &username, &password] {
+        if !odbc_value_ok(value) {
+            return Err("Wartość zawiera niedozwolony znak.".to_string());
+        }
+    }
+    if name.trim().is_empty() || host.trim().is_empty() || database.trim().is_empty() || username.is_empty() {
+        return Err("Brak nazwy źródła, serwera, bazy lub loginu.".to_string());
+    }
+    setup_odbc_source_impl(name.trim(), host.trim(), port.trim(), database.trim(), &username, &password)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -890,7 +1006,8 @@ pub fn run() {
             list_directory,
             tailscale_connect,
             discover_servers,
-            convert_kicad_to_altium
+            convert_kicad_to_altium,
+            setup_odbc_source
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
