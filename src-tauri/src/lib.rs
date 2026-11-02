@@ -11,16 +11,18 @@ use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind, Debouncer};
 use tauri::{Emitter, Manager};
 
+mod kicad;
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-// Files that must never be versioned: the DbLib is rewritten locally by this program
-// (and by Altium) from the database, so versioning it only produces conflicts; `.tmp`
+// Files that must never be versioned: the DbLib / .kicad_dbl lives in the repository
+// folder itself and is rewritten locally by this program (and by Altium) from the database, so versioning it only produces conflicts; `.tmp`
 // are our own atomic-write leftovers. Passed to every svn call (not stored in the
 // repository), so `svn add` / `svn status` skip them like a permanent .gitignore.
-const SVN_IGNORED: &str = "*.DbLib *.dblib *.tmp Thumbs.db desktop.ini";
+const SVN_IGNORED: &str = "*.DbLib *.dblib *.kicad_dbl *.tmp Thumbs.db desktop.ini";
 
 fn svn_command() -> Command {
     let mut command = Command::new("svn");
@@ -341,7 +343,13 @@ struct WatcherState(Mutex<Option<Debouncer<RecommendedWatcher>>>);
 // writer leaves `.tmp` files briefly (see write_file_atomically) - neither should
 // count as a user edit worth auto-pushing.
 fn is_relevant_change(path: &str) -> bool {
-    !path.contains(".svn") && !path.ends_with(".tmp")
+    // The library file sits in the watched folder and is never versioned (see SVN_IGNORED),
+    // so its rewrites must not trigger a Push.
+    let lower = path.to_lowercase();
+    !path.contains(".svn")
+        && !lower.ends_with(".tmp")
+        && !lower.ends_with(".dblib")
+        && !lower.ends_with(".kicad_dbl")
 }
 
 #[tauri::command(async)]
@@ -567,6 +575,21 @@ fn tailscale_backend_state(cli: &str) -> Option<String> {
     json.get("BackendState")?.as_str().map(|s| s.to_string())
 }
 
+#[cfg(target_os = "linux")]
+fn ensure_tailscaled_running() {
+    let active = Command::new("systemctl")
+        .args(["is-active", "--quiet", "tailscaled"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true);
+    if !active {
+        // Graphical password prompt (polkit); failure is reported by the later status check.
+        let _ = Command::new("pkexec")
+            .args(["systemctl", "enable", "--now", "tailscaled"])
+            .status();
+    }
+}
+
 // Starts the Tailscale client and logs in with the auth key stored in the given
 // text file (`tailscale login --auth-key=<key>`). Returns a short status message.
 #[tauri::command(async)]
@@ -603,6 +626,20 @@ fn tailscale_connect(auth_key_path: &str) -> Result<String, String> {
             break;
         }
         std::thread::sleep(Duration::from_secs(1));
+    }
+
+    // Linux: the daemon is normally enabled by the package; if it is not running anyway
+    // (disabled by hand, installed without the postinstall script), start and enable it.
+    #[cfg(target_os = "linux")]
+    if state.is_none() {
+        ensure_tailscaled_running();
+        for _ in 0..10 {
+            state = tailscale_backend_state(&cli);
+            if state.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
     }
 
     if state.as_deref() == Some("Running") {
@@ -776,9 +813,10 @@ fn discover_servers(port: u16) -> Vec<String> {
     open_hosts(hosts, port, Duration::from_millis(400))
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 // KiCad -> Altium conversion: runs the bundled kicad2altium.py (copy of
-// onyks-bloodstone/converter, pure standard library) with the system Python.
+// onyks-bloodstone/converter, pure standard library) with the system Python. The files
+// come from the window (drag and drop), so they are written to a temporary folder, converted
+// there and the results are handed back to the window; nothing is left on disk.
 fn python_candidates() -> &'static [&'static str] {
     if cfg!(target_os = "windows") {
         &["python", "py", "python3"]
@@ -787,19 +825,105 @@ fn python_candidates() -> &'static [&'static str] {
     }
 }
 
-#[tauri::command]
-fn convert_kicad_to_altium(
-    app: tauri::AppHandle,
-    sym: Vec<String>,
-    fp: Vec<String>,
-    out: String,
-    name: Option<String>,
-) -> Result<String, String> {
-    if sym.is_empty() && fp.is_empty() {
-        return Err("Wybierz pliki .kicad_sym i/lub .kicad_mod / katalog .pretty.".to_string());
+#[derive(serde::Deserialize)]
+struct ConvertInput {
+    name: String,
+    content: String,
+}
+
+#[derive(serde::Serialize)]
+struct ConvertOutput {
+    name: String,
+    data: String, // base64
+}
+
+#[derive(serde::Serialize)]
+struct ConvertResult {
+    ok: bool,
+    log: String,
+    outputs: Vec<ConvertOutput>,
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        out.push(TABLE[(b[0] >> 2) as usize] as char);
+        out.push(TABLE[(((b[0] & 3) << 4) | (b[1] >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 { TABLE[(((b[1] & 15) << 2) | (b[2] >> 6)) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[(b[2] & 63) as usize] as char } else { '=' });
     }
-    if out.trim().is_empty() {
-        return Err("Wybierz katalog wyjściowy.".to_string());
+    out
+}
+
+// A plain file or library name: no folders, no characters Windows forbids.
+fn plain_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !"<>:\"|?*".contains(*c))
+        .collect();
+    cleaned.trim().trim_matches('.').to_string()
+}
+
+// The Python that ships with the Windows installer (redist/python), if this build has one.
+fn bundled_python(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let exe = app.path().resource_dir().ok()?.join("redist").join("python").join("python.exe");
+    exe.is_file().then_some(exe)
+}
+
+fn run_converter(script: &Path, args: &[std::ffi::OsString], bundled: Option<std::path::PathBuf>) -> Result<(bool, String), String> {
+    let mut last_error = String::new();
+    let mut interpreters: Vec<std::ffi::OsString> = bundled.into_iter().map(|p| p.into_os_string()).collect();
+    interpreters.extend(python_candidates().iter().map(|name| std::ffi::OsString::from(name)));
+    for python in &interpreters {
+        let python_name = python.to_string_lossy().to_string();
+        let mut command = Command::new(python);
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+        command.env("PYTHONIOENCODING", "utf-8").arg(script).args(args);
+
+        match command.output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let text = format!("{}{}", stdout, stderr).trim().to_string();
+                // The Microsoft Store stub of "python" exits non-zero without running anything.
+                if !output.status.success() && (text.is_empty() || text.contains("Python was not found")) {
+                    last_error = format!("{} nie uruchomił konwertera.", python_name);
+                    continue;
+                }
+                return Ok((output.status.success(), text));
+            }
+            Err(e) => last_error = format!("{}: {}", python_name, e),
+        }
+    }
+    Err(format!(
+        "Nie znaleziono Pythona 3 (wymagany do konwersji). Zainstaluj go i spróbuj ponownie. ({})",
+        last_error
+    ))
+}
+
+// `kind`: "symbols" (.kicad_sym -> <name>.SchLib) or "footprints" (.kicad_mod -> <name>.PcbLib).
+#[tauri::command(async)]
+fn convert_kicad_content(
+    app: tauri::AppHandle,
+    kind: String,
+    name: String,
+    files: Vec<ConvertInput>,
+) -> Result<ConvertResult, String> {
+    let (extension, flag) = match kind.as_str() {
+        "symbols" => (".kicad_sym", "--sym"),
+        "footprints" => (".kicad_mod", "--fp"),
+        _ => return Err("Nieznany rodzaj konwersji.".to_string()),
+    };
+    let library = plain_name(&name);
+    if library.is_empty() {
+        return Err("Brak nazwy biblioteki.".to_string());
+    }
+    if files.is_empty() {
+        return Err("Brak plików do konwersji.".to_string());
     }
 
     let script = app
@@ -812,45 +936,103 @@ fn convert_kicad_to_altium(
         return Err(format!("Nie znaleziono konwertera: {}", script.display()));
     }
 
-    let mut last_error = String::new();
-    for python in python_candidates() {
-        let mut command = Command::new(python);
-        #[cfg(target_os = "windows")]
-        command.creation_flags(0x08000000);
-        command.env("PYTHONIOENCODING", "utf-8").arg(&script);
-        if !sym.is_empty() {
-            command.arg("--sym").args(&sym);
-        }
-        if !fp.is_empty() {
-            command.arg("--fp").args(&fp);
-        }
-        command.arg("-o").arg(&out);
-        if let Some(name) = name.as_ref().filter(|n| !n.trim().is_empty()) {
-            command.arg("--name").arg(name.trim());
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let work = std::env::temp_dir().join(format!("chalcedon-convert-{}-{}", std::process::id(), nanos));
+    let input_dir = work.join("in");
+    let output_dir = work.join("out");
+
+    let result = (|| -> Result<ConvertResult, String> {
+        // Footprints go into a "<library>.pretty" folder so the converter reads them as one library.
+        let source_dir = if kind == "footprints" {
+            input_dir.join(format!("{}.pretty", library))
+        } else {
+            input_dir.clone()
+        };
+        fs::create_dir_all(&source_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
+
+        let mut sources: Vec<std::path::PathBuf> = Vec::new();
+        for file in &files {
+            let file_name = plain_name(&file.name);
+            if !file_name.to_lowercase().ends_with(extension) {
+                return Err(format!("Plik {} nie jest plikiem {}.", file.name, extension));
+            }
+            let path = source_dir.join(&file_name);
+            fs::write(&path, file.content.as_bytes()).map_err(|e| e.to_string())?;
+            sources.push(path);
         }
 
-        match command.output() {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let text = format!("{}{}", stdout, stderr).trim().to_string();
-                if output.status.success() {
-                    return Ok(text);
+        let mut args: Vec<std::ffi::OsString> = vec![flag.into()];
+        if kind == "footprints" {
+            args.push(source_dir.clone().into_os_string());
+        } else {
+            args.extend(sources.iter().map(|p| p.clone().into_os_string()));
+        }
+        args.push("-o".into());
+        args.push(output_dir.clone().into_os_string());
+        args.push("--name".into());
+        args.push(library.clone().into());
+
+        let (ok, log) = run_converter(&script, &args, bundled_python(&app))?;
+
+        let mut outputs = Vec::new();
+        if ok {
+            for entry in fs::read_dir(&output_dir).map_err(|e| e.to_string())?.flatten() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let lower = file_name.to_lowercase();
+                if lower.ends_with(".schlib") || lower.ends_with(".pcblib") {
+                    let bytes = fs::read(entry.path()).map_err(|e| e.to_string())?;
+                    outputs.push(ConvertOutput { name: file_name, data: base64_encode(&bytes) });
                 }
-                // The Microsoft Store stub of "python" exits non-zero without running anything.
-                if text.is_empty() || text.contains("Python was not found") {
-                    last_error = format!("{} nie uruchomił konwertera.", python);
-                    continue;
-                }
-                return Err(text);
             }
-            Err(e) => last_error = format!("{}: {}", python, e),
+        }
+        Ok(ConvertResult { ok: ok && !outputs.is_empty(), log, outputs })
+    })();
+
+    let _ = fs::remove_dir_all(&work);
+    result
+}
+
+// What goes into `Driver =` of a Linux data source: the name of the PostgreSQL driver registered
+// in odbcinst.ini, or - when the package did not register it (the AUR psqlodbc does not) - the
+// path of its library, which unixODBC accepts there too.
+#[cfg(not(target_os = "windows"))]
+fn linux_postgres_driver() -> Option<String> {
+    if let Ok(output) = Command::new("odbcinst").args(["-q", "-d"]).output() {
+        let names: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|l| l.trim().trim_matches(['[', ']']).to_string())
+            .collect();
+        if let Some(name) = names
+            .iter()
+            .find(|n| n.starts_with("PostgreSQL Unicode"))
+            .or_else(|| names.iter().find(|n| n.contains("PostgreSQL")))
+        {
+            return Some(name.clone());
         }
     }
-    Err(format!(
-        "Nie znaleziono Pythona 3 (wymagany do konwersji). Zainstaluj go i spróbuj ponownie. ({})",
-        last_error
-    ))
+    let dirs = [
+        "/usr/lib",
+        "/usr/lib64",
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib/odbc",
+        "/usr/lib64/odbc",
+        "/usr/local/lib",
+        "/usr/lib/psqlodbc",
+        "/usr/lib/onyks-chalcedon/psqlodbc/lib",
+    ];
+    for file in ["psqlodbcw.so", "psqlodbca.so"] {
+        for dir in dirs {
+            let path = Path::new(dir).join(file);
+            if path.exists() {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
 }
 
 // ODBC data source for the CAD tools. The .DbLib / .kicad_dbl only name the source
@@ -908,15 +1090,7 @@ fn setup_odbc_source_impl(name: &str, host: &str, port: &str, database: &str, us
 fn setup_odbc_source_impl(name: &str, host: &str, port: &str, database: &str, username: &str, password: &str) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
 
-    let listed = Command::new("odbcinst").args(["-q", "-d"]).output().ok();
-    let names: Vec<String> = listed
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(|l| l.trim().trim_matches(['[', ']']).to_string()).collect())
-        .unwrap_or_default();
-    let driver = names
-        .iter()
-        .find(|n| n.starts_with("PostgreSQL Unicode"))
-        .or_else(|| names.iter().find(|n| n.contains("PostgreSQL")))
-        .cloned()
+    let driver = linux_postgres_driver()
         .ok_or("Nie znaleziono sterownika ODBC PostgreSQL (zainstaluj odbc-postgresql / postgresql-odbc / psqlodbc).")?;
 
     let home = std::env::var("HOME").map_err(|_| "Brak $HOME.".to_string())?;
@@ -956,6 +1130,25 @@ fn setup_odbc_source_impl(_: &str, _: &str, _: &str, _: &str, _: &str, _: &str) 
     Err("Konfiguracja ODBC jest obsługiwana tylko na Windows i Linux.".to_string())
 }
 
+// Name of the installed PostgreSQL ODBC driver, None when it is missing.
+#[tauri::command]
+fn odbc_driver_status() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        use winreg::RegKey;
+        let drivers = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey(r"SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers")
+            .ok()?;
+        let names: Vec<String> = drivers.enum_values().filter_map(|v| v.ok()).map(|(n, _)| n).collect();
+        return names.into_iter().find(|n| n.contains("PostgreSQL"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        return linux_postgres_driver();
+    }
+}
+
 #[tauri::command]
 fn setup_odbc_source(name: String, host: String, port: String, database: String, username: String, password: String) -> Result<String, String> {
     for value in [&name, &host, &port, &database, &username, &password] {
@@ -969,6 +1162,7 @@ fn setup_odbc_source(name: String, host: String, port: String, database: String,
     setup_odbc_source_impl(name.trim(), host.trim(), port.trim(), database.trim(), &username, &password)
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
@@ -1006,8 +1200,10 @@ pub fn run() {
             list_directory,
             tailscale_connect,
             discover_servers,
-            convert_kicad_to_altium,
-            setup_odbc_source
+            convert_kicad_content,
+            setup_odbc_source,
+            odbc_driver_status,
+            kicad::kicad_sync
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1055,10 +1251,54 @@ mod tests {
     }
 
     #[test]
+    fn base64_and_plain_name() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(plain_name("..\\..\\evil/Enkoder.kicad_mod"), "Enkoder.kicad_mod");
+        assert_eq!(plain_name("Ko\u{142}o:*.pretty"), "Ko\u{142}o.pretty");
+        assert_eq!(plain_name(".."), "");
+    }
+
+    // The real converter (needs Python 3) on a footprint whose output path has a
+    // character outside latin-1 - the case that used to crash.
+    #[test]
+    fn converter_handles_non_latin1_paths() {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("converter").join("kicad2altium.py");
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("chalcedon-conv-test-{nanos}"));
+        let pretty = root.join("Ko\u{142}o.pretty");
+        let out = root.join("wyj\u{15b}cie");
+        fs::create_dir_all(&pretty).unwrap();
+        fs::create_dir_all(&out).unwrap();
+        fs::write(
+            pretty.join("ENCODER.kicad_mod"),
+            "(footprint \"ENCODER\" (layer \"F.Cu\") (pad \"1\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\")))",
+        )
+        .unwrap();
+        let args: Vec<std::ffi::OsString> = vec![
+            "--fp".into(),
+            pretty.clone().into_os_string(),
+            "-o".into(),
+            out.clone().into_os_string(),
+            "--name".into(),
+            "Enkoder".into(),
+        ];
+        let result = run_converter(&script, &args, None);
+        let produced = out.join("Enkoder.PcbLib").exists();
+        let _ = fs::remove_dir_all(&root);
+        let (ok, log) = result.expect("python 3 is required for this test");
+        assert!(ok && produced, "{}", log);
+    }
+
+    #[test]
     fn is_relevant_change_filters_svn_and_tmp() {
         assert!(is_relevant_change("C:/repo/fpga/fpga.PcbLib"));
         assert!(!is_relevant_change("C:/repo/.svn/wc.db"));
         assert!(!is_relevant_change("C:/repo/onyks_bloodstone.DbLib.tmp"));
+        assert!(!is_relevant_change("C:/repo/onyks_bloodstone.DbLib"));
+        assert!(!is_relevant_change("C:/repo/onyks_bloodstone.kicad_dbl"));
     }
 
     // Exercises the real notify + notify-debouncer-mini watch, bypassing Tauri's

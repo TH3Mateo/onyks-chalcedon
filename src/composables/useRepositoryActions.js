@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { useUserStore } from '../stores/user.js'
+import { syncKicad } from './useKicadSync.js'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -78,6 +79,7 @@ export function useRepositoryActions(dialogs)
                 })
             }
             await finish('Finishing...')
+            syncKicad()
             return true
         }
         catch(e)

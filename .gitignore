@@ -26,3 +26,4 @@ dist-ssr
 
 # Bundled installers (fetched by scripts/fetch-redist.ps1)
 src-tauri/redist/*.msi
+src-tauri/redist/python/

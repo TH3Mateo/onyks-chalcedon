@@ -2,9 +2,12 @@
     import ProfilePage from '../../components/ProfilePage.vue';
     import { useUserStore } from '../../stores/user.js';
     import { ref } from 'vue';
-    import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
+    import { invoke } from '@tauri-apps/api/core';
+    import { open } from '@tauri-apps/plugin-dialog';
     import { useDbLibSync } from '../../composables/useDbLibSync.js';
     import { useOdbcSource } from '../../composables/useOdbcSource.js';
+    import { checkCredentials } from '../../composables/useCadTool.js';
+    import { useKicadSync, KICAD_VERSION } from '../../composables/useKicadSync.js';
     import { useRepositorySync } from '../../composables/useRepositorySync.js';
     import { useTailscale } from '../../composables/useTailscale.js';
     import { useServerDiscovery, portOf, replaceHost, defaultRepositoryAddress } from '../../composables/useServerDiscovery.js';
@@ -57,39 +60,18 @@
     const { status: dblibStatus, syncDbLib } = useDbLibSync()
     const { status: repositoryStatus } = useRepositorySync()
 
-    const chooseDbLibPath = async () =>
-    {
-        const file = await saveDialog({
-            defaultPath: visibleSettings.value.database.dblibPath || 'onyks_bloodstone.DbLib',
-            filters: [{ name: 'Altium Database Library', extensions: ['DbLib'] }]
-        });
-
-        if(file)
-        {
-            visibleSettings.value.database.dblibPath = file
-        }
-    }
-
-    const chooseKicadDblPath = async () =>
-    {
-        const file = await saveDialog({
-            defaultPath: visibleSettings.value.database.kicadDblPath || 'onyks_bloodstone.kicad_dbl',
-            filters: [{ name: 'KiCad Database Library', extensions: ['kicad_dbl'] }]
-        });
-
-        if(file)
-        {
-            visibleSettings.value.database.kicadDblPath = file
-        }
-    }
-
     const updateDbLibNow = async () =>
     {
         await save()
         await syncDbLib()
     }
 
+    const { status: kicadStatus, syncKicad } = useKicadSync()
+
     const { status: odbcStatus, setupOdbcSource } = useOdbcSource()
+
+    const odbcDriver = ref(undefined)
+    invoke('odbc_driver_status').then((name) => { odbcDriver.value = name }).catch(() => { odbcDriver.value = undefined })
 
     const setupOdbcNow = async () =>
     {
@@ -126,9 +108,16 @@
     // The web manager lives on the same machine as the SVN server: an empty repository
     // address is filled in (http://<ip>:8111/svn/part_library), an existing one follows
     // the new IP.
-    const useServer = (server) =>
+    // Finding a server does not use the login and password, so a wrong login cannot be seen
+    // there. It is checked when a server is picked.
+    const credentialsCheck = ref('')
+
+    const useServer = async (server) =>
     {
         visibleSettings.value.webManagerAddress = server.address
+        credentialsCheck.value = ''
+        checkCredentials(server.address, visibleSettings.value.login, visibleSettings.value.password)
+            .then((result) => { credentialsCheck.value = result })
         if (visibleSettings.value.repository.address)
         {
             visibleSettings.value.repository.address = replaceHost(visibleSettings.value.repository.address, server.ip)
@@ -168,7 +157,7 @@
 
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
             <onyks-text size="s" v-if="discoveryStatus.running">Searching the network...</onyks-text>
-            <onyks-text size="s" v-else-if="discoveryStatus.searched && discoveryStatus.servers.length == 0">No server found.</onyks-text>
+            <onyks-text size="s" v-else-if="discoveryStatus.searched && discoveryStatus.servers.length == 0">No server found. Check that the VPN (Tailscale) is connected and that the login and password above are correct.</onyks-text>
             <onyks-button background="blue" @click="findServer" :disabled="discoveryStatus.running">Find server</onyks-button>
         </onyks-container>
 
@@ -179,6 +168,11 @@
 
         <onyks-alert v-if="discoveryStatus.error" type="error">{{ discoveryStatus.error }}</onyks-alert>
 
+        <onyks-alert v-if="credentialsCheck === 'invalid'" type="error">
+            The server refused this login or password. Correct them above, otherwise SVN and the database library will not work.
+        </onyks-alert>
+        <onyks-text size="s" v-else-if="credentialsCheck === 'ok'">Login and password accepted by the server.</onyks-text>
+
         <onyks-header level="4">Database</onyks-header>
 
         <onyks-text size="s">
@@ -186,38 +180,14 @@
             .kicad_dbl, depending on the account (the server tells which one it is). With autoupdate on it
             checks the database periodically and adds every new category table and every new supplier column.
             Neither file contains a password: the connection and the login come from the PostgreSQL ODBC driver.
-            In the Altium file the connection settings and anything else set in Altium are kept; if it does not
-            exist yet, it is created with the ODBC data source "bloodstone". The KiCad file is generated by the server.
-            Keep the file outside the repository folder, otherwise Push would commit it.
+            The file is kept in the database library folder (Repository section below). In the Altium file the
+            connection settings and anything else set in Altium are kept; if it does not exist yet, it is created
+            with the ODBC data source "bloodstone". The KiCad file is generated by the server.
         </onyks-text>
 
         <onyks-text size="s">
             CAD tool of the account: {{ dblibStatus.tool ?? 'not detected yet (it is checked with Update now and on every autoupdate)' }}
         </onyks-text>
-
-        <onyks-container v-if="dblibStatus.tool !== 'kicad'" type="grid" cols="2" gap="l" padding="">
-            <div>
-                <onyks-text size="m">Database library file path</onyks-text>
-                <onyks-text size="s" style="display: block; opacity: 0.5;">(DbLib)</onyks-text>
-            </div>
-            <onyks-textfield size="m" v-model="visibleSettings.database.dblibPath" placeholder="e.g C:/User/onyks_bloodstone.DbLib" disabled></onyks-textfield>
-        </onyks-container>
-
-        <onyks-container v-if="dblibStatus.tool !== 'kicad'" gap="m" type="group" align="center" justify="end" padding="">
-            <onyks-button background="yellow" @click="chooseDbLibPath">Select</onyks-button>
-        </onyks-container>
-
-        <onyks-container v-if="dblibStatus.tool !== 'altium'" type="grid" cols="2" gap="l" padding="">
-            <div>
-                <onyks-text size="m">Database library file path</onyks-text>
-                <onyks-text size="s" style="display: block; opacity: 0.5;">(kicad_dbl)</onyks-text>
-            </div>
-            <onyks-textfield size="m" v-model="visibleSettings.database.kicadDblPath" placeholder="e.g C:/User/onyks_bloodstone.kicad_dbl" disabled></onyks-textfield>
-        </onyks-container>
-
-        <onyks-container v-if="dblibStatus.tool !== 'altium'" gap="m" type="group" align="center" justify="end" padding="">
-            <onyks-button background="yellow" @click="chooseKicadDblPath">Select</onyks-button>
-        </onyks-container>
 
         <onyks-container type="grid" cols="2" gap="l" padding="">
             <onyks-text size="m">Autoupdate</onyks-text>
@@ -255,6 +225,40 @@
 
         <onyks-alert v-if="odbcStatus.error" type="error">{{ odbcStatus.error }}</onyks-alert>
 
+        <onyks-alert v-if="odbcDriver === null" type="error">
+            The PostgreSQL ODBC driver is not installed. Windows: reinstall the program (it installs psqlODBC).
+            Debian/Ubuntu: odbc-postgresql. Fedora: postgresql-odbc. Arch: reinstall the onyks-chalcedon package (it contains the driver).
+        </onyks-alert>
+
+        <template v-if="dblibStatus.tool === 'kicad'">
+            <onyks-header level="4">KiCad</onyks-header>
+
+            <onyks-text size="s">
+                For a KiCad account the program sets up KiCad {{ KICAD_VERSION }}: it defines the path variable
+                ONYKS_LIBRARY (the library folder) and keeps the ONYKS libraries in KiCad's global symbol and
+                footprint tables up to date after every Pull. Your own libraries are never touched. Close and
+                reopen KiCad after a change to see the new libraries.
+            </onyks-text>
+
+            <onyks-container type="grid" cols="2" gap="l" padding="">
+                <onyks-text size="m">KiCad configuration folder</onyks-text>
+                <onyks-textfield size="m" :value="kicadStatus.configDir || 'not found yet'" disabled></onyks-textfield>
+                <onyks-text size="m">ONYKS_LIBRARY</onyks-text>
+                <onyks-textfield size="m" :value="kicadStatus.library || '-'" disabled></onyks-textfield>
+            </onyks-container>
+
+            <onyks-container gap="m" type="group" align="center" justify="end" padding="">
+                <onyks-text size="s">
+                    Last synchronization: {{ formatTime(kicadStatus.lastSync) }} ·
+                    {{ kicadStatus.symbols }} symbol, {{ kicadStatus.footprints }} footprint libraries{{ kicadStatus.database ? ', database library' : '' }}
+                </onyks-text>
+                <onyks-button background="blue" @click="syncKicad" :disabled="kicadStatus.running">Synchronize now</onyks-button>
+            </onyks-container>
+
+            <onyks-alert v-if="kicadStatus.error" type="error">{{ kicadStatus.error }}</onyks-alert>
+            <onyks-text size="s" v-for="note in kicadStatus.notes" :key="note">{{ note }}</onyks-text>
+        </template>
+
         <onyks-header level="4">Repository</onyks-header>
 
         <onyks-text size="s">
@@ -268,9 +272,19 @@
         <onyks-container type="grid" cols="2" gap="l" padding="">
             <onyks-text size="m">Address</onyks-text>
             <onyks-textfield size="m" v-model="visibleSettings.repository.address" placeholder="e.g https://google.com"></onyks-textfield>
-            <onyks-text size="m">Folder Path</onyks-text>
-            <onyks-textfield size="m" v-model="visibleSettings.repository.path" placeholder="e.g C:/User/repository" disabled></onyks-textfield>
+            <div>
+                <onyks-text size="m">Database library folder</onyks-text>
+                <onyks-text size="s" style="display: block; opacity: 0.5;">(SVN working copy)</onyks-text>
+            </div>
+            <onyks-textfield size="m" v-model="visibleSettings.repository.path" placeholder="e.g C:/Users/me/part_library" disabled></onyks-textfield>
         </onyks-container>
+
+        <onyks-text size="s">
+            The one local folder of the library: the SVN working copy and, in the same folder, the database
+            library file for your CAD tool (onyks_bloodstone.DbLib for Altium, onyks_bloodstone.kicad_dbl for
+            KiCad). Point your CAD tool at that file. The file is created and kept up to date by the program
+            and SVN is set to ignore it, so Push never commits it.
+        </onyks-text>
 
         <onyks-container gap="m" type="group" align="center" justify="end" padding="">
             <onyks-button background="yellow" @click="chooseRepositoryPath">Select</onyks-button>

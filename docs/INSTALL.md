@@ -12,7 +12,7 @@ Laczy sie z serwerem **ONYKS Bloodstone** (web GUI, baza, SVN z bibliotekami Sch
 |---|---|---|
 | System | Windows 10/11 64-bit | dystrybucja z WebKitGTK 4.1 |
 | SVN (klient `svn`) | instalowany automatycznie | zaleznosc pakietu (`subversion`) |
-| Python 3 (tylko zakladka Convert) | Windows: zainstaluj recznie; Linux: zaleznosc pakietu | `python3` / `python` |
+| Python 3 (tylko zakladka Convert) | wbudowany w instalator (embeddable Python) | zaleznosc pakietu: `python3` / `python` |
 | Sterownik ODBC PostgreSQL | instalowany automatycznie | `odbc-postgresql` / `postgresql-odbc` / `psqlodbc` |
 | Tailscale (opcjonalnie) | instalowany automatycznie | osobno, jesli potrzebny |
 | Serwer Bloodstone | dostepny w sieci / przez VPN | j.w. |
@@ -21,7 +21,7 @@ Potrzebujesz tez: **loginu i hasla** do serwera (to samo konto do web GUI i SVN)
 
 ## 2. Instalacja - Windows
 
-1. Pobierz instalator `ONYKS Chalcedon_1.2.0_x64-setup.exe`.
+1. Pobierz instalator `ONYKS Chalcedon_1.3.1_x64-setup.exe`.
 2. Uruchom go i przejdz kreator. Doinstalowanie sterownika ODBC i SVN wymaga uprawnien administratora - zatwierdz monit UAC.
 3. Instalator **po cichu doinstaluje brakujace skladniki**:
    - Subversion (TortoiseSVN z klientem `svn`) - jesli polecenie `svn` nie istnieje,
@@ -41,7 +41,7 @@ pnpm install
 pnpm tauri build
 ```
 
-Wynik: `src-tauri/target/release/bundle/nsis/ONYKS Chalcedon_1.2.0_x64-setup.exe`.
+Wynik: `src-tauri/target/release/bundle/nsis/ONYKS Chalcedon_1.3.1_x64-setup.exe`.
 Pliki `.msi` w `src-tauri/redist/` nie sa w gicie.
 
 ## 3. Instalacja - Linux
@@ -50,27 +50,27 @@ Pakiety znajduja sie w katalogu `dist-linux/` (albo w wydaniu projektu).
 
 **Debian / Ubuntu**
 ```bash
-sudo apt install "./ONYKS Chalcedon_1.2.0_amd64.deb"
+sudo apt install "./ONYKS Chalcedon_1.3.1_amd64.deb"
 ```
 Uzyj dokladnie `apt install ./plik.deb` (nie `dpkg -i`): tylko `apt` doinstaluje zaleznosci (`subversion`, `unixodbc`, `odbc-postgresql`).
 `tailscale` jest zalecany, ale nie ma go w domyslnych repozytoriach - zainstaluj go wg instrukcji tailscale.com, jesli chcesz z niego korzystac.
 
 **Fedora / openSUSE (RPM)**
 ```bash
-sudo dnf install "./ONYKS Chalcedon-1.2.0-1.x86_64.rpm"
+sudo dnf install "./ONYKS Chalcedon-1.3.1-1.x86_64.rpm"
 ```
 Zaleznosci: `subversion`, `unixODBC`, `postgresql-odbc` (nazwy z Fedory; na openSUSE sterownik nazywa sie `psqlODBC` - zainstaluj go recznie).
 
 **Arch Linux** - gotowy pakiet:
 ```bash
-sudo pacman -U onyks-chalcedon-1.2.0-1-x86_64.pkg.tar.zst
+sudo pacman -U onyks-chalcedon-1.3.1-1-x86_64.pkg.tar.zst
 ```
 albo budowanie ze zrodel (kompilacja trwa kilka minut):
 ```bash
 cd packaging/arch
 makepkg -si
 ```
-Pakiet zalezy od `webkit2gtk-4.1`, `gtk3`, `subversion`, `unixodbc`, `tailscale` (wszystkie doinstalowuje pacman). Sterownik `psqlodbc` jest tylko w AUR - zainstaluj go pomocnikiem AUR, jesli korzystasz z bibliotek bazy w Altium/KiCad.
+Pakiet zalezy od `webkit2gtk-4.1`, `gtk3`, `subversion`, `unixodbc`, `tailscale` (wszystkie doinstalowuje pacman). Sterownik PostgreSQL ODBC (`psqlodbc`) jest tylko w AUR, wiec pakiet buduje go z oficjalnych zrodel (`psqlodbc-16.00.0000`, suma kontrolna przypieta w PKGBUILD) do `/usr/lib/onyks-chalcedon/psqlodbc` i rejestruje w unixODBC, jesli zaden sterownik PostgreSQL nie jest zarejestrowany. Nie trzeba nic instalowac z AUR.
 Aby zbudowac z lokalnego repozytorium zamiast z GitHuba: `CHALCEDON_REPO=file:///sciezka/do/repo makepkg -si`.
 
 Uruchomienie: z menu aplikacji albo poleceniem `onyks-chalcedon`.
@@ -108,7 +108,7 @@ Wpis oznaczony "unknown service" to cos, co odpowiada na tym porcie, ale nie jes
 
 ![Web Manager i wyszukiwanie serwera](img/settings-webmanager.png)
 
-### 5.3 Database (plik .DbLib dla Altium)
+### 5.3 Database (plik .DbLib dla Altium / .kicad_dbl dla KiCad)
 
 Aplikacja sama utrzymuje plik `.DbLib`: po wlaczeniu autoupdate sprawdza baze co zadany czas i dopisuje
 kazda nowa tabele kategorii oraz kolumne dostawcy. Ustawienia polaczenia i reszta konfiguracji zrobionej w Altium sa zachowane.
@@ -116,15 +116,17 @@ Jesli plik nie istnieje, zostanie utworzony ze zrodlem danych ODBC `bloodstone`.
 
 | Pole | Opis |
 |---|---|
-| DbLib File Path | sciezka do pliku (przycisk **Select**, okno zapisu) |
 | Autoupdate | wlacza okresowa aktualizacje |
 | Autoupdate Interval (in seconds) | co ile sekund sprawdzac (minimum 5) |
 | Update now | aktualizacja natychmiast; ponizej widac "Last check" i "Last change" |
 
 Wazne:
-- Trzymaj plik **poza folderem repozytorium**, inaczej Push zacommituje go do SVN (`*.DbLib` jest zreszta ignorowany przez Chalcedon).
-- Altium potrzebuje zrodla danych ODBC o nazwie **bloodstone** wskazujacego na baze `altium_lib` serwera
-  (sterownik PostgreSQL Unicode x64). Chalcedon nie tworzy tego DSN - dodaj go raz w *Zrodla danych ODBC (64-bit)*.
+- Plik (`onyks_bloodstone.DbLib` lub `onyks_bloodstone.kicad_dbl`, zaleznie od konta) lezy w **folderze biblioteki**
+  ustawionym w sekcji Repository. SVN ignoruje go, wiec Push nigdy go nie zacommituje. Wskaz go w swoim programie CAD.
+- Zrodlo danych ODBC **bloodstone** (baza `altium_lib` albo `kicad_lib`) Chalcedon tworzy sam z loginu i hasla
+  (przycisk **Set up ODBC source** lub automatycznie przy kazdej synchronizacji). Haslo jest w zrodle ODBC
+  (rejestr Windows / `~/.odbc.ini`), nie w pliku biblioteki.
+- Jesli sterownik PostgreSQL ODBC nie jest zainstalowany, w tej sekcji pojawi sie czerwony komunikat.
 
 ![Sekcja Database](img/settings-database.png)
 
@@ -133,7 +135,7 @@ Wazne:
 | Pole | Opis |
 |---|---|
 | Address | adres repozytorium SVN, np. `http://192.168.1.10/svn/...` |
-| Folder Path | lokalny folder roboczy (przycisk **Select**) |
+| Database library folder | jedyny lokalny folder biblioteki: kopia robocza SVN i w nim plik .DbLib / .kicad_dbl (przycisk **Select**) |
 | Autoupdate (Pull) | automatycznie pobiera zmiany z serwera co zadany interwal |
 | Autoupdate Interval (in seconds) | interwal pobierania |
 | Auto-push on file change | automatycznie commituje, gdy dowolny plik w folderze (rekursywnie) sie zmieni |
@@ -143,7 +145,7 @@ Przyciski **Push** i **Pull** na pasku ikon dzialaja zawsze, niezaleznie od auto
 Pod polami widac czas ostatniego Pull i Push oraz ewentualny blad.
 
 Zmiana IP serwera (np. siec lokalna <-> VPN) jest obslugiwana automatycznie: Chalcedon wykonuje `svn relocate` na biezacy adres.
-Pliki `*.DbLib`, `*.tmp`, `Thumbs.db`, `desktop.ini` sa zawsze ignorowane.
+Pliki `*.DbLib`, `*.kicad_dbl`, `*.tmp`, `Thumbs.db`, `desktop.ini` sa zawsze ignorowane.
 
 ![Sekcja Repository](img/settings-repository.png)
 
@@ -163,10 +165,16 @@ W ustawieniach zapisywana jest tylko sciezka do pliku, nigdy sam klucz.
 
 ### 5.6 Convert (KiCad -> Altium)
 
-Zakladka **Convert** (ikona strzalek w lewym menu) zamienia biblioteki KiCad na pliki Altium:
-symbole `.kicad_sym` -> `.SchLib`, footprinty `.kicad_mod` lub folder `.pretty` -> `.PcbLib`.
-Wybierz pliki wejsciowe, folder wyjsciowy (opcjonalnie nazwe biblioteki) i kliknij **Convert**.
-Wynik i ostrzezenia konwertera widac w oknie na dole. Wymaga zainstalowanego Pythona 3.
+Zakladka **Convert** (ikona strzalek w lewym menu) zamienia biblioteki KiCad na pliki Altium. Sa dwie pary okien
+*wejscie -> wyjscie*, bez wpisywania sciezek:
+
+- **Symbols**: przeciagnij pliki `.kicad_sym` na lewe okno - kazdy daje wlasny `.SchLib`.
+- **Footprints**: przeciagnij folder `.pretty` albo pliki `.kicad_mod` - razem daja jeden `.PcbLib`
+  (przycisk **Choose .pretty folder** wybiera folder bez przeciagania).
+
+Biblioteka ma zawsze nazwe pliku (albo folderu `.pretty`) wejsciowego. Wynik pojawia sie w prawym oknie;
+przycisk **Save** zapisuje plik, **Save all to folder** zapisuje wszystkie naraz. Duze okno **Log** pod spodem
+pokazuje komunikaty konwertera i ostrzezenia. Na Windowsie Python jest wbudowany w instalator; na Linuksie jest zaleznoscia pakietu.
 
 ![Zakladka Convert](img/convert.png)
 

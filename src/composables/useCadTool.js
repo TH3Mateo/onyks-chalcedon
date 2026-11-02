@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useUserStore } from '../stores/user.js'
+import { fetch } from '@tauri-apps/plugin-http'
 import { serverAddress, createClient } from '../web/utils/http.js'
 
 // Which CAD tool the account from Settings uses ('altium' or 'kicad'). Only the server
@@ -49,4 +50,39 @@ export async function detectTool()
 
     cachedKey = key
     return tool.value
+}
+
+// Asks the server at `address` whether the login and password are right (the server finds
+// the same answer for SVN and the database). 'ok' | 'invalid' | 'unknown' - unknown when the
+// server cannot say (an older version without the endpoint, no connection).
+export async function checkCredentials(address, login, password)
+{
+    if (!address || !login || !password)
+    {
+        return 'unknown'
+    }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5000)
+    try
+    {
+        const response = await fetch(`${address}/api/user/identify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ login, password }),
+            signal: controller.signal,
+        })
+        if (response.ok)
+        {
+            return 'ok'
+        }
+        return response.status === 401 ? 'invalid' : 'unknown'
+    }
+    catch (e)
+    {
+        return 'unknown'
+    }
+    finally
+    {
+        clearTimeout(timer)
+    }
 }

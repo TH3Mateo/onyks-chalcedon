@@ -6,6 +6,8 @@ import { buildDbLib, normalize } from '../utils/dblib.js'
 import { buildKicadDbl, normalizeKicadDbl } from '../utils/kicaddbl.js'
 import { detectTool } from './useCadTool.js'
 import { setupOdbcSource } from './useOdbcSource.js'
+import { syncKicad } from './useKicadSync.js'
+import { DBLIB_FILE, KICAD_DBL_FILE } from '../utils/libraryFiles.js'
 
 // Keeps the local library file in step with the database - the Altium .DbLib or, for
 // an account that uses KiCad, the .kicad_dbl. Altium: a new category table
@@ -14,6 +16,25 @@ import { setupOdbcSource } from './useOdbcSource.js'
 // utils/dblib.js for what is kept and what is generated.
 
 const MIN_INTERVAL_SECONDS = 5
+
+
+const inRepository = (file) =>
+{
+    const folder = useUserStore().repository.path.replace(/[\\/]+$/, '')
+    return folder === '' ? '' : `${folder}/${file}`
+}
+
+// Before the library file moved into the repository folder it had a path of its own;
+// its content (the Altium settings in it) is carried over the first time.
+async function readExisting(path, legacyPath)
+{
+    const existing = await invoke('read_text_file', { path })
+    if (existing === null && legacyPath && legacyPath !== path)
+    {
+        return await invoke('read_text_file', { path: legacyPath }).catch(() => null)
+    }
+    return existing
+}
 const PAGE_SIZE = 100
 
 const api = createClient('/api', { timeout: 5000 })
@@ -41,7 +62,7 @@ async function fetchAll(url)
     }
 }
 
-async function updateAltiumDbLib(path)
+async function updateAltiumDbLib(path, legacyPath)
 {
     // Ordered by id, so new categories are appended after the existing ones.
     const tables = (await fetchAll('/table/list')).map((table) => table.name)
@@ -49,7 +70,7 @@ async function updateAltiumDbLib(path)
     // the database returned the rows in a different order.
     const suppliers = (await fetchAll('/supplier/list')).sort((a, b) => a.id - b.id)
 
-    const existing = await invoke('read_text_file', { path })
+    const existing = await readExisting(path, legacyPath)
     const content = buildDbLib(existing, tables, suppliers)
     const changed = existing === null || normalize(existing) !== normalize(content)
 
@@ -60,7 +81,7 @@ async function updateAltiumDbLib(path)
     return changed
 }
 
-async function updateKicadDbl(path)
+async function updateKicadDbl(path, legacyPath)
 {
     const generated = (await api.get('/settings/kicad-dbl')).data
     if (generated === null || typeof generated !== 'object')
@@ -68,7 +89,7 @@ async function updateKicadDbl(path)
         throw new Error('The server returned an unexpected KiCad library description.')
     }
 
-    const existing = await invoke('read_text_file', { path })
+    const existing = await readExisting(path, legacyPath)
     const content = buildKicadDbl(existing, generated)
     const changed = existing === null || normalizeKicadDbl(existing) !== normalizeKicadDbl(content)
 
@@ -100,17 +121,23 @@ export async function syncDbLib()
         const kicad = status.value.tool === 'kicad'
         // Keeps the data source in step with the login and password (no-op when nothing changed).
         await setupOdbcSource()
-        const path = kicad ? userStore.database.kicadDblPath : userStore.database.dblibPath
+        const path = inRepository(kicad ? KICAD_DBL_FILE : DBLIB_FILE)
         if (!path)
         {
-            status.value.error = kicad ? 'The path of the .kicad_dbl file is unset.' : 'The path of the DbLib file is unset.'
+            status.value.error = 'The database library folder is unset (Settings, Repository).'
             return false
         }
 
-        const changed = kicad ? await updateKicadDbl(path) : await updateAltiumDbLib(path)
+        const legacy = kicad ? userStore.database.kicadDblPath : userStore.database.dblibPath
+        const changed = kicad ? await updateKicadDbl(path, legacy) : await updateAltiumDbLib(path, legacy)
         if (changed)
         {
             status.value.lastChange = new Date()
+        }
+        if (kicad)
+        {
+            // the database library row of KiCad's table depends on this file existing
+            syncKicad()
         }
         status.value.lastCheck = new Date()
         status.value.error = ''
@@ -145,8 +172,7 @@ export function startDbLibAutoupdate()
         userStore.isReady,
         userStore.database.autoupdate,
         userStore.database.autoupdateInterval,
-        userStore.database.dblibPath,
-        userStore.database.kicadDblPath,
+        userStore.repository.path,
         userStore.login,
         userStore.password,
         userStore.webManagerAddress,
@@ -155,7 +181,7 @@ export function startDbLibAutoupdate()
         clearInterval(timer)
         timer = null
 
-        if (!userStore.isReady || !userStore.database.autoupdate || !(userStore.database.dblibPath || userStore.database.kicadDblPath))
+        if (!userStore.isReady || !userStore.database.autoupdate || !userStore.repository.path)
         {
             return
         }

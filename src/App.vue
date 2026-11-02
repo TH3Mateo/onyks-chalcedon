@@ -4,12 +4,14 @@
     import { startDbLibAutoupdate } from './composables/useDbLibSync.js';
     import { startRepositorySync } from './composables/useRepositorySync.js';
     import { startTailscaleAutostart } from './composables/useTailscale.js';
+    import { startKicadSync } from './composables/useKicadSync.js';
 
     const store = useUserStore()
     store.init()
     startDbLibAutoupdate()
     startRepositorySync()
     startTailscaleAutostart()
+    startKicadSync()
 
     onMounted(() =>
     {

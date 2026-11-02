@@ -4,26 +4,35 @@
 # Local tree instead of GitHub: CHALCEDON_REPO=file:///path/to/git/repo makepkg -si
 #
 # The SVN client that the Windows installer bundles as an MSI is a regular dependency here.
-# psqlodbc exists only in the AUR, so it is optional (install it with an AUR helper).
+# psqlodbc exists only in the AUR, so this package builds it from the official source tarball
+# (same release and checksum as the AUR package) into a private folder and registers it with
+# unixODBC when no PostgreSQL driver is registered - nothing has to be installed from the AUR.
 pkgname=onyks-chalcedon
-pkgver=1.2.0
+pkgver=1.3.1
 pkgrel=1
+_psqlodbc=16.00.0000
 pkgdesc='PC app for managing the ONYKS PCB element library (companion of ONYKS Bloodstone)'
 arch=('x86_64')
 url='https://github.com/TH3Mateo/onyks-chalcedon'
 license=('custom')
-depends=('webkit2gtk-4.1' 'gtk3' 'subversion' 'unixodbc' 'tailscale' 'python')
-optdepends=('psqlodbc: PostgreSQL ODBC driver for database libraries (AUR only)')
+depends=('webkit2gtk-4.1' 'gtk3' 'subversion' 'unixodbc' 'postgresql-libs' 'tailscale' 'python')
 makedepends=('rust' 'nodejs' 'pnpm' 'git' 'pkgconf' 'openssl' 'libayatana-appindicator' 'librsvg' 'xdotool')
 source=("$pkgname::git+${CHALCEDON_REPO:-$url.git}"
-        'onyks-chalcedon.desktop')
-sha256sums=('SKIP' 'SKIP')
+        'onyks-chalcedon.desktop'
+        "https://ftp.postgresql.org/pub/odbc/versions.old/src/psqlodbc-$_psqlodbc.tar.gz")
+sha256sums=('SKIP' 'SKIP'
+            'afd892f89d2ecee8d3f3b2314f1bd5bf2d02201872c6e3431e5c31096eca4c8b')
 # makepkg's default CFLAGS contain -flto; the C code built by ring and libsodium-sys-stable
 # then ends up as LTO bitcode that rustc's linker cannot use (undefined ring_core_*/sodium_*).
 options=('!lto')
 install=onyks-chalcedon.install
 
 build() {
+  cd "$srcdir/psqlodbc-$_psqlodbc"
+  CFLAGS+=" -std=gnu11"
+  ./configure --prefix=/usr/lib/onyks-chalcedon/psqlodbc
+  make
+
   cd "$srcdir/$pkgname"
   pnpm install --frozen-lockfile
   # --no-bundle: only the binary (with the frontend embedded); pacman is the packager.
@@ -31,6 +40,16 @@ build() {
 }
 
 package() {
+  cd "$srcdir/psqlodbc-$_psqlodbc"
+  make DESTDIR="$pkgdir" install
+  rm -f "$pkgdir"/usr/lib/onyks-chalcedon/psqlodbc/lib/*.la
+  # Driver description for `odbcinst -i -d -f`, used by the install script.
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/onyks-chalcedon/psqlodbc.template" <<TEMPLATE
+[PostgreSQL Unicode]
+Description=PostgreSQL ODBC driver (bundled with ONYKS Chalcedon)
+Driver=/usr/lib/onyks-chalcedon/psqlodbc/lib/psqlodbcw.so
+TEMPLATE
+
   cd "$srcdir/$pkgname"
   install -Dm755 src-tauri/target/release/onyks-chalcedon "$pkgdir/usr/bin/onyks-chalcedon"
   # Resources are looked up in /usr/lib/<productName> (same place as in the deb).

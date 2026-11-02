@@ -56,8 +56,9 @@ export const useUserStore = defineStore('user', () =>
         path: ''
     })
 
-    // The server address comes from webManagerAddress; dblibPath / kicadDblPath is the local
-    // Altium .DbLib / KiCad .kicad_dbl file (by the account's CAD tool) kept up to date with the database.
+    // The server address comes from webManagerAddress. The Altium .DbLib / KiCad .kicad_dbl is
+    // kept in the repository folder; dblibPath / kicadDblPath are the old, separate locations
+    // (only read once to carry the file's content over).
     const defaultDatabase = () => (
     {
         autoupdate: false,
@@ -71,7 +72,7 @@ export const useUserStore = defineStore('user', () =>
     // stored in the text file at authKeyPath (the key itself is never kept in settings).
     const defaultTailscale = () => (
     {
-        autostart: false,
+        autostart: true,
         authKeyPath: ''
     })
 

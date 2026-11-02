@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useUserStore } from '../stores/user.js'
 import { busy } from './useRepositoryActions.js'
+import { syncKicad } from './useKicadSync.js'
 
 // Keeps the local SVN working copy in sync automatically, two independent ways:
 // - `autoupdate` + `autoupdateInterval`: periodic Pull (svn update), same pattern as
@@ -55,6 +56,7 @@ async function pullOnce()
         }
         status.value.lastPullCheck = new Date()
         status.value.error = ''
+        syncKicad()
         return true
     }
     catch (e)
